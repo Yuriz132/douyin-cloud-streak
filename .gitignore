@@ -1,0 +1,23 @@
+# ===== 登录态（含 Cookie / 凭证，严禁提交到仓库）=====
+state.json
+state.json.bak.*
+state.json.*
+
+# ===== 运行产生的日志与截图 =====
+run.log
+error_screenshot.png
+
+# ===== Python 缓存 / 虚拟环境 =====
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+
+# ===== 部署临时压缩包 =====
+*.zip
+
+# ===== 本地私密环境文件 =====
+.env
+.env.*
