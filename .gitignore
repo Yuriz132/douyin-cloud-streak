@@ -2,6 +2,8 @@
 state.json
 state.json.bak.*
 state.json.*
+# 例外：保留一个空的占位模板，方便小白知道需要这个文件（不含任何隐私）
+!state.json.example
 
 # ===== 运行产生的日志与截图 =====
 run.log
