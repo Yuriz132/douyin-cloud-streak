@@ -1,0 +1,115 @@
+{
+  "providers": [
+    {
+      "name": "yxkl",
+      "base_url": "https://ai.yxkl.cloud/v1",
+      "api_key": "sk-CWRhX483OHxGWToDCUytGlYsw29XSdaPTEBP7p2dBE3S9MmH",
+      "text_model": "Deepseek-v4-flash",
+      "vision_model": "MiMo-V2.5",
+      "temperature": 0.85,
+      "max_tokens": 200,
+      "timeout_seconds": 40,
+      "is_primary": true
+    },
+    {
+      "name": "agnes",
+      "base_url": "https://apihub.agnes-ai.com/v1",
+      "api_key": "sk-E0GxQc3by741XHjD1DtVgxhYzLBtQ2gEExYjE01aSOPg5xuK",
+      "text_model": "agnes-2.5-pro-alpha",
+      "vision_model": "agnes-image-2.1-flash",
+      "temperature": 0.85,
+      "max_tokens": 200,
+      "timeout_seconds": 40,
+      "is_primary": false
+    },
+    {
+      "name": "deepseek",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "",
+      "text_model": "deepseek-chat",
+      "vision_model": "",
+      "temperature": 0.85,
+      "max_tokens": 200,
+      "timeout_seconds": 30,
+      "is_primary": false
+    }
+  ],
+  "emotion_on": true,
+  "max_history_messages": 20,
+  "global_rules": [
+    "不要使用换行分段，保持 1-2 句话",
+    "允许使用 emoji，但每条不超过 2 个",
+    "严禁承认自己是 AI / 大模型 / 机器人 / 人工智能",
+    "严禁输出思考过程、推理步骤、markdown 列表；直接给最终回复",
+    "如果对方发的是图片/语音/表情包，结合内容自然回应，不必追问"
+  ],
+  "friends": {
+    "刘飞宇": {
+      "enabled": false,
+      "_note": "保持原续火花",
+      "system_prompt": "你们是好朋友，说话随意自然。",
+      "reply_probability": 0.85,
+      "min_reply_interval_seconds": 90,
+      "active_hours": "08:00-23:30",
+      "max_reply_chars": 60,
+      "enable_vision": true,
+      "enable_emotion": true
+    },
+    "王付硕": {
+      "enabled": false,
+      "_note": "保持原续火花",
+      "system_prompt": "你们是同学，关系不错，聊天轻松。",
+      "reply_probability": 0.85,
+      "min_reply_interval_seconds": 90,
+      "active_hours": "08:00-23:30",
+      "max_reply_chars": 60,
+      "enable_vision": true,
+      "enable_emotion": true
+    },
+    "梁登辉": {
+      "enabled": true,
+      "system_prompt": "你是梁登辉的朋友，说话极短、极直接、甚至有点冷。能用两个字不用三个字。不主动关心、不输出情绪价值、不助攻。你平时就是这样，简洁就是舒服。",
+      "reply_probability": 0.8,
+      "min_reply_interval_seconds": 120,
+      "active_hours": "07:00-23:59",
+      "max_reply_chars": 50,
+      "enable_vision": true,
+      "enable_emotion": true,
+      "emotion_tone": false,
+      "video_comment_reply": false
+    },
+    "孙俊彦": {
+      "enabled": false,
+      "_note": "原日志里此昵称曾匹配失败，如需开启先验证",
+      "system_prompt": "你们是朋友，语气中性温和。",
+      "reply_probability": 0.8,
+      "min_reply_interval_seconds": 120,
+      "active_hours": "09:00-22:00",
+      "max_reply_chars": 50,
+      "enable_vision": true,
+      "enable_emotion": true
+    },
+    "玉福": {
+      "enabled": false,
+      "_note": "保持原续火花",
+      "system_prompt": "你们关系很好，可以随便聊天分享日常。",
+      "reply_probability": 0.9,
+      "min_reply_interval_seconds": 60,
+      "active_hours": "08:00-23:30",
+      "max_reply_chars": 60,
+      "enable_vision": true,
+      "enable_emotion": true
+    },
+    "张佳怡": {
+      "enabled": false,
+      "_note": "保持原续火花",
+      "system_prompt": "她是女生朋友，说话要礼貌温和尊重。",
+      "reply_probability": 0.8,
+      "min_reply_interval_seconds": 120,
+      "active_hours": "09:00-22:00",
+      "max_reply_chars": 50,
+      "enable_vision": true,
+      "enable_emotion": true
+    }
+  }
+}
