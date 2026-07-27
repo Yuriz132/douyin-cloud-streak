@@ -3,7 +3,7 @@
     {
       "name": "yxkl",
       "base_url": "https://ai.yxkl.cloud/v1",
-      "api_key": "sk-CWRhX483OHxGWToDCUytGlYsw29XSdaPTEBP7p2dBE3S9MmH",
+      "api_key": "sk-YOUR_API_KEY_HERE",
       "text_model": "Deepseek-v4-flash",
       "vision_model": "MiMo-V2.5",
       "temperature": 0.85,
@@ -14,7 +14,7 @@
     {
       "name": "agnes",
       "base_url": "https://apihub.agnes-ai.com/v1",
-      "api_key": "sk-E0GxQc3by741XHjD1DtVgxhYzLBtQ2gEExYjE01aSOPg5xuK",
+      "api_key": "sk-YOUR_API_KEY_HERE",
       "text_model": "agnes-2.5-pro-alpha",
       "vision_model": "agnes-image-2.1-flash",
       "temperature": 0.85,
