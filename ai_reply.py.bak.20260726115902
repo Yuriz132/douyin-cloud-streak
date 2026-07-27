@@ -1,0 +1,765 @@
+"""
+ai_reply.py  (v2 · 多模态增强版)
+================================================
+抖音私信 AI 自动回复 —— 基于 Playwright + 多 AI provider。
+
+新增能力（相对 v1）：
+  - 多 provider fallback：agnes（主，多模态图文识别）+ deepseek（兜底，纯文本）
+  - 读取朋友消息里的「文字 + 图片(截图) + 分享视频的文案」
+  - 情绪识别：判断对方情绪，动态调整回复语气与延迟
+  - 回复延迟拟人化：按情绪/消息长度/时段算一个像人的等待时间
+  - emoji / 表情文字回复（不触发抖音贴纸面板，最稳）
+
+依赖：
+    pip install playwright playwright-stealth requests pillow
+    playwright install chromium
+
+用法：
+    python ai_reply.py --once
+    python ai_reply.py --dry-run             # 抓消息+调 AI，不真实发送
+    python ai_reply.py --friend 梁登辉        # 只处理一人
+    python ai_reply.py --stats                # 看历史统计
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import io
+import json
+import os
+import random
+import re
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, time as dtime
+from pathlib import Path
+from typing import Any
+
+import requests
+from PIL import Image
+from playwright.sync_api import (
+    BrowserContext,
+    Page,
+    Playwright,
+    TimeoutError as PWTimeoutError,
+    sync_playwright,
+)
+try:
+    from playwright_stealth import Stealth
+except Exception:
+    Stealth = None
+
+
+# ===================== 路径与常量 =====================
+
+BASE_DIR = Path(__file__).parent.resolve()
+STATE_FILE = BASE_DIR / "state.json"
+AI_CONFIG_FILE = BASE_DIR / "ai_config.json"
+HISTORY_DIR = BASE_DIR / "history"
+LOG_FILE = BASE_DIR / "ai_reply.log"
+MESSAGES_URL = "https://www.douyin.com/chat"  # 与服务端 cloud_streak.py 一致
+
+# 输入框 / 发送按钮（不同版本 DOM 可能变化）
+SEL_MESSAGE_INPUT = (
+    'div[contenteditable="true"]'
+    ', textarea[placeholder*="消息" i]'
+    ', textarea[placeholder*="说" i]'
+)
+
+
+# ===================== 情绪枚举 =====================
+
+EMOTIONS = ["happy", "sad", "angry", "tired", "need_care", "curious", "teasing", "neutral"]
+EMOTION_CN = {
+    "happy": "开心/兴奋", "sad": "难过/失落", "angry": "生气/不耐烦",
+    "tired": "疲惫/敷衍", "need_care": "需要关心/求助", "curious": "好奇/提问",
+    "teasing": "调侃/开玩笑", "neutral": "平淡/日常",
+}
+# 不同情绪对应的「拟人化延迟」区间（秒）：秒数越大越像真人在忙/思考
+EMOTION_DELAY = {
+    "happy": (8, 35), "sad": (30, 120), "angry": (20, 90),
+    "tired": (15, 60), "need_care": (25, 110), "curious": (10, 50),
+    "teasing": (5, 30), "neutral": (15, 70),
+}
+# 情绪 -> 语气微调（追加到 system prompt）
+EMOTION_TONE = {
+    "happy": "对方现在情绪不错，可以轻松接梗、一起开心。",
+    "sad": "对方似乎有点低落，语气温暖、共情，不要敷衍，也不要过度追问。",
+    "angry": "对方可能有点烦，先顺一顺、别顶嘴，简短温和地化解。",
+    "tired": "对方看起来累/敷衍，别发长篇大论，简短陪聊即可。",
+    "need_care": "对方可能需要关心或帮助，多倾听、给出真诚具体的回应。",
+    "curious": "对方在提问或好奇，认真作答，可以带点互动感。",
+    "teasing": "对方在跟你开玩笑/互怼，自然接住、可以回怼但别过火。",
+    "neutral": "日常闲聊，自然随意即可。",
+}
+
+
+# ===================== Provider 配置 =====================
+
+@dataclass
+class ProviderConfig:
+    name: str
+    base_url: str
+    api_key: str
+    text_model: str = ""
+    vision_model: str = ""          # 多模态（看图）模型；为空则不支持图片
+    temperature: float = 0.85
+    max_tokens: int = 200
+    timeout_seconds: int = 30
+    is_primary: bool = False
+
+
+@dataclass
+class FriendConfig:
+    name: str
+    enabled: bool = True
+    system_prompt: str = ""
+    reply_probability: float = 1.0
+    min_reply_interval_seconds: int = 60
+    active_hours: str = "00:00-23:59"
+    max_reply_chars: int = 60
+    enable_vision: bool = True       # 是否把对方发的图片/视频截图送模型识别
+    enable_emotion: bool = True      # 是否做情绪识别并据此调整
+
+
+@dataclass
+class AppConfig:
+    providers: list[ProviderConfig] = field(default_factory=list)
+    friends: dict[str, FriendConfig] = field(default_factory=dict)
+    global_rules: list[str] = field(default_factory=list)
+    emotion_on: bool = True
+    max_history_messages: int = 20
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> "AppConfig":
+        provs: list[ProviderConfig] = []
+        for p in raw.get("providers", []):
+            provs.append(ProviderConfig(
+                name=p.get("name", "unnamed"),
+                base_url=p.get("base_url", ""),
+                api_key=p.get("api_key", ""),
+                text_model=p.get("text_model", ""),
+                vision_model=p.get("vision_model", ""),
+                temperature=float(p.get("temperature", 0.85)),
+                max_tokens=int(p.get("max_tokens", 200)),
+                timeout_seconds=int(p.get("timeout_seconds", 30)),
+                is_primary=bool(p.get("is_primary", False)),
+            ))
+        friends: dict[str, FriendConfig] = {}
+        for name, f in raw.get("friends", {}).items():
+            friends[name] = FriendConfig(
+                name=name,
+                enabled=bool(f.get("enabled", True)),
+                system_prompt=str(f.get("system_prompt", "")),
+                reply_probability=float(f.get("reply_probability", 1.0)),
+                min_reply_interval_seconds=int(f.get("min_reply_interval_seconds", 60)),
+                active_hours=str(f.get("active_hours", "00:00-23:59")),
+                max_reply_chars=int(f.get("max_reply_chars", 60)),
+                enable_vision=bool(f.get("enable_vision", True)),
+                enable_emotion=bool(f.get("enable_emotion", True)),
+            )
+        return cls(
+            providers=provs,
+            friends=friends,
+            global_rules=list(raw.get("global_rules", [])),
+            emotion_on=bool(raw.get("emotion_on", True)),
+            max_history_messages=int(raw.get("max_history_messages", 20)),
+        )
+
+
+# ===================== 日志 =====================
+
+def _log(msg: str) -> None:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {msg}"
+    print(line, flush=True)
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as fp:
+            fp.write(line + "\n")
+    except Exception:
+        pass
+
+
+# ===================== 配置与历史 =====================
+
+def load_config() -> AppConfig:
+    if not AI_CONFIG_FILE.exists():
+        raise FileNotFoundError("找不到 ai_config.json，请先创建（参考 ai_config.example.json）。")
+    return AppConfig.from_json(json.loads(AI_CONFIG_FILE.read_text(encoding="utf-8")))
+
+
+def load_history(friend_name: str) -> list[dict[str, Any]]:
+    safe = re.sub(r"[\\/:*?\"<>|]", "_", friend_name)
+    p = HISTORY_DIR / f"{safe}.json"
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) or []
+    except Exception as e:
+        _log(f"[历史] 读取 {friend_name} 失败: {e}")
+        return []
+
+
+def save_history(friend_name: str, history: list[dict[str, Any]]) -> None:
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[\\/:*?\"<>|]", "_", friend_name)
+    try:
+        (HISTORY_DIR / f"{safe}.json").write_text(
+            json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        _log(f"[历史] 写入 {friend_name} 失败: {e}")
+
+
+# ===================== 时间 =====================
+
+def in_active_hours(active_hours: str) -> bool:
+    try:
+        s, e = active_hours.split("-")
+        sh, sm = map(int, s.strip().split(":"))
+        eh, em = map(int, e.strip().split(":"))
+        now = datetime.now().time()
+        return dtime(sh, sm) <= now <= dtime(eh, em)
+    except Exception:
+        return True
+
+
+# ===================== AI 调用（含 fallback） =====================
+
+def _post(prov: ProviderConfig, messages: list[dict], model: str) -> str | None:
+    if not prov.api_key or not prov.base_url:
+        return None
+    url = prov.base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model, "messages": messages,
+        "temperature": prov.temperature, "max_tokens": prov.max_tokens, "stream": False,
+    }
+    headers = {"Authorization": f"Bearer {prov.api_key}", "Content-Type": "application/json"}
+    try:
+        r = requests.post(url, json=payload, headers=headers, timeout=prov.timeout_seconds)
+        r.raise_for_status()
+        return r.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip() or None
+    except Exception as e:
+        _log(f"[AI:{prov.name}] 失败: {e}")
+        return None
+
+
+def chat_text(cfg: AppConfig, friend: FriendConfig, text_messages: list[dict],
+              extra_system: str = "") -> str | None:
+    """纯文本回复，按 providers 顺序 fallback。返回回复文本或 None。"""
+    system_parts = []
+    if friend.system_prompt.strip():
+        system_parts.append(friend.system_prompt.strip())
+    if extra_system:
+        system_parts.append(extra_system)
+    for rule in cfg.global_rules:
+        system_parts.append(f"- {rule}")
+    system_parts.append(
+        f"输出长度不超过 {friend.max_reply_chars} 字。保持自然口语化，"
+        "不分多段，不用列表，不用 markdown。"
+    )
+    system = "\n\n".join(system_parts)
+    msgs: list[dict] = [{"role": "system", "content": system}]
+    msgs.extend(text_messages[-cfg.max_history_messages:])
+    for prov in cfg.providers:
+        if not prov.text_model:
+            continue
+        reply = _post(prov, msgs, prov.text_model)
+        if reply:
+            return reply
+    return None
+
+
+def chat_vision(cfg: AppConfig, friend: FriendConfig, text_prompt: str,
+                image_b64_list: list[str], extra_system: str = "") -> str | None:
+    """多模态（看图）理解，返回文本描述或 None。"""
+    system_parts = []
+    if friend.system_prompt.strip():
+        system_parts.append(friend.system_prompt.strip())
+    if extra_system:
+        system_parts.append(extra_system)
+    system_parts.append("你正在帮对方理解他/她发来的图片/视频截图内容，用一句话概括关键信息即可。")
+    system = "\n\n".join(system_parts)
+    content: list[dict] = [{"type": "text", "text": text_prompt}]
+    for b64 in image_b64_list:
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+    msgs = [{"role": "system", "content": system},
+            {"role": "user", "content": content}]
+    for prov in cfg.providers:
+        if not prov.vision_model:
+            continue
+        reply = _post(prov, msgs, prov.vision_model)
+        if reply:
+            return reply
+    return None
+
+
+def detect_emotion(cfg: AppConfig, text: str) -> str:
+    """用主文本模型快速分类情绪；失败回 neutral。"""
+    if not text.strip():
+        return "neutral"
+    sys = ("判断下面这条私信对方的情绪，只回一个英文标签："
+           + "/".join(EMOTIONS) + "。不要解释。")
+    msgs = [{"role": "system", "content": sys},
+            {"role": "user", "content": text[-300:]}]
+    for prov in cfg.providers:
+        if not prov.text_model:
+            continue
+        lab = _post(prov, msgs, prov.text_model)
+        if lab:
+            lab = re.sub(r"[^a-z_]", "", lab.lower()).strip()
+            return lab if lab in EMOTIONS else "neutral"
+    return "neutral"
+
+
+# ===================== 浏览器 =====================
+
+def build_context(pw: Playwright) -> BrowserContext:
+    if not STATE_FILE.exists():
+        raise FileNotFoundError("找不到 state.json，请先提取登录态。")
+    state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    browser = pw.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-infobars", "--lang=zh-CN"],
+    )
+    return browser.new_context(
+        storage_state=state, viewport={"width": 1280, "height": 800},
+        locale="zh-CN",
+        user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+    )
+
+
+def goto_messages(page: Page) -> None:
+    if Stealth is not None:
+        try:
+            Stealth().apply_stealth_sync(page)
+        except Exception as e:
+            _log(f"[UI] stealth 应用失败(可忽略): {e}")
+    page.goto(MESSAGES_URL, wait_until="domcontentloaded", timeout=60000)
+    time.sleep(15)  # 与 cloud_streak.py 一致：等 React 渲染
+    try:
+        page.wait_for_selector("img", timeout=10000)
+    except PWTimeoutError:
+        _log("[UI] 页面渲染超时，可能登录态失效或被风控")
+        raise
+
+
+def _js_find_and_click(page: Page, name: str) -> bool:
+    """JS 遍历 DOM textContent 找包含 name 的最短元素（对字符拆分免疫），点击后返回 True。"""
+    try:
+        handle = page.evaluate_handle(f"""(n) => {{
+            let best=null,bestLen=1e9; const all=document.querySelectorAll('*');
+            for(const el of all){{const r=el.getBoundingClientRect();
+                if(r.x>480)continue;
+                const t=(el.textContent||'').trim();
+                if(t.includes(n)&&t.length>0&&t.length<bestLen){{best=el;bestLen=t.length;}}
+            }}return best;
+        }}""", name)
+        el = handle.as_element() if handle else None
+        if el:
+            el.click(force=True)
+            time.sleep(random.uniform(2, 4))
+            return True
+    except Exception as e:
+        _log(f"[UI] JS 定位 {name} 失败: {e}")
+    return False
+
+
+def search_and_open(page: Page, name: str) -> bool:
+    try:
+        box = page.get_by_placeholder("搜索", exact=False).first
+        if box.count() == 0:
+            return False
+        box.click()
+        box.fill(name)
+        time.sleep(5)
+        # 搜索结果的匹配同样用 JS（字符拆分免疫）
+        if _js_find_and_click(page, name):
+            if page.locator('div[contenteditable="true"]').first.count() == 0:
+                sb = page.get_by_text("发消息", exact=False).first
+                if sb.count() > 0:
+                    sb.click(force=True)
+                    time.sleep(4)
+                else:
+                    return False
+            return True
+        return False
+    except Exception as e:
+        _log(f"搜索打开 {name} 失败: {e}")
+    return False
+
+
+def open_friend_chat(page: Page, friend_name: str) -> bool:
+    # 1) 快速路径：get_by_text（昵称连续时可命中）
+    contact = page.get_by_text(friend_name, exact=False).first
+    if contact.count() > 0:
+        contact.click(force=True)
+        time.sleep(random.uniform(2, 4))
+        if page.locator('div[contenteditable="true"]').first.count() > 0:
+            return True
+    # 2) JS 遍历左栏 textContent（对字符拆分免疫）
+    if _js_find_and_click(page, friend_name):
+        if page.locator('div[contenteditable="true"]').first.count() > 0:
+            return True
+    # 3) 搜索兜底
+    if search_and_open(page, friend_name):
+        return True
+    _log(f"[UI] 在会话列表里没找到 {friend_name}")
+    return False
+
+
+# ---------- 消息读取（文字 + 图片截图 + 视频文案） ----------
+
+def _element_png_b64(el) -> str | None:
+    """把一个元素截图成 PNG，返回 base64（失败返回 None）"""
+    try:
+        buf = el.screenshot(timeout=5000)
+        img = Image.open(io.BytesIO(buf)).convert("RGB")
+        # 限制尺寸，避免 base64 过大
+        max_w = 800
+        if img.width > max_w:
+            h = int(img.height * max_w / img.width)
+            img = img.resize((max_w, h))
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        return base64.b64encode(out.getvalue()).decode("ascii")
+    except Exception:
+        return None
+
+
+# ============ 界面噪音过滤（导航/按钮/反爬注入串，不应被当成好友消息）============
+UI_NOISE_TEXTS = {
+    "发消息", "搜索", "更多", "表情", "发送", "返回", "消息",
+    "进入全屏", "退出全屏", "直播加载中", "抖音聊天", "联系人", "聊天",
+    "视频通话", "语音通话", "位置", "红包", "表情包", "添加表情",
+    "已读", "已送达",
+}
+
+def _is_noise_text(txt: str) -> bool:
+    """判断一段文本是不是界面噪音（导航/按钮/反爬注入串），不应被当成好友消息。"""
+    t = (txt or "").strip()
+    if not t:
+        return True
+    if t in UI_NOISE_TEXTS:
+        return True
+    # 反爬注入的乱码串特征：无明显中文字、含一长串字母、整体很短
+    has_cn = bool(re.search(r"[\u4e00-\u9fff]", t))
+    if not has_cn and re.search(r"[A-Za-z]{5,}", t) and len(t) <= 24:
+        return True
+    return False
+
+
+def read_recent_messages(page: Page, max_n: int = 30, with_images: bool = True) -> list[dict[str, Any]]:
+    """
+    返回消息列表，每条：
+      { role: 'user'|'assistant', type: 'text'|'image'|'video',
+        content: str, img_b64: Optional[str], raw: str }
+    文字气泡用 get_by_text 抓取；图片/视频元素截图供多模态模型识别。
+    """
+    out: list[dict[str, Any]] = []
+
+    # 视口宽度（用于按“左右位置”判断消息归属）
+    vw = 1280
+    try:
+        vs = page.viewport_size
+        if vs and vs.get("width"):
+            vw = vs["width"]
+    except Exception:
+        pass
+
+    # 1) 文字气泡（更稳定，优先）
+    try:
+        bubbles = page.locator('div[contenteditable="true"]').first  # 确保已进会话
+    except Exception:
+        pass
+    # 用消息容器：douyin 聊天气泡多为带文本的可点击块
+    text_nodes = page.get_by_text("", exact=False)
+    n = text_nodes.count()
+    seen_text: set[str] = set()
+    for i in range(max(0, n - max_n * 3), n):
+        node = text_nodes.nth(i)
+        try:
+            txt = (node.inner_text(timeout=1500) or "").strip()
+        except Exception:
+            continue
+        if not txt or len(txt) > 400 or txt in seen_text:
+            continue
+        # 过滤掉界面噪音（导航/按钮/反爬注入串），避免被误判为好友消息
+        if _is_noise_text(txt):
+            continue
+        # 过滤非消息元素：时间标签、聊天头(好友昵称)、火花标签、已读回执
+        cls = (node.get_attribute("class") or "").lower()
+        if any(k in cls for k in ("timelayout", "timestr", "header", "streak", "hasread", "readtext")):
+            continue
+        # 角色判定：抖音把昵称/文本拆成 <span>，且气泡 class 不含 self/right 等关键字，
+        # 因此改用“位置”判断——右半边(>视口60%)是我发的，左半边是对方的。
+        try:
+            box = node.bounding_box()
+        except Exception:
+            box = None
+        is_mine = bool(box and (box.get("x", 0) + box.get("width", 0) / 2) > vw * 0.6)
+        out.append({"role": "assistant" if is_mine else "user", "type": "text",
+                    "content": txt, "img_b64": None, "raw": txt})
+
+    # 2) 图片/视频元素（截图给多模态模型看，按位置区分归属，并过滤头像/小图标）
+    if with_images:
+        for sel in ['img[src*="png"]', 'img[src*="jpeg"]', 'img[src*="jpg"]',
+                    'video', 'img[class*="image"]', 'img[class*="thumb"]']:
+            elems = page.locator(sel)
+            cnt = min(elems.count(), 6)
+            for j in range(cnt):
+                el = elems.nth(j)
+                b64 = _element_png_b64(el)
+                if not b64:
+                    continue
+                try:
+                    ib = el.bounding_box()
+                except Exception:
+                    ib = None
+                # 头像/小图标通常 < 60px，跳过；否则按左右位置判断归属
+                if ib and (ib.get("width", 0) < 60 or ib.get("height", 0) < 60):
+                    continue
+                tag = "video" if sel == "video" else "image"
+                img_is_mine = bool(ib and (ib.get("x", 0) + ib.get("width", 0) / 2) > vw * 0.6)
+                out.append({"role": "assistant" if img_is_mine else "user", "type": tag,
+                            "content": f"[{tag}]", "img_b64": b64, "raw": f"[{tag}]"})
+
+    # 按页面出现顺序近似排序：用每个元素的 bounding_box.y
+    def _y(m):
+        return 0
+    # 不强制排序（文本已覆盖主要内容，图片作为补充上下文）
+    return out[-max_n:]
+
+
+def send_text(page: Page, text: str) -> bool:
+    if not text.strip():
+        return False
+    try:
+        editor = page.locator(SEL_MESSAGE_INPUT).first
+        editor.wait_for(timeout=10000)
+        editor.click()
+        time.sleep(random.uniform(0.2, 0.6))
+        chunk = random.randint(6, 12)
+        for i in range(0, len(text), chunk):
+            editor.type(text[i:i + chunk], delay=random.randint(30, 80))
+        time.sleep(random.uniform(0.3, 0.7))
+        sb = page.locator('button[aria-label*="发送" i], div[aria-label*="发送" i]').first
+        if sb.count() > 0 and sb.is_enabled():
+            sb.click()
+        else:
+            editor.press("Enter")
+        time.sleep(random.uniform(0.8, 1.5))
+        return True
+    except Exception as e:
+        _log(f"[发送] 失败: {e}")
+        return False
+
+
+# ===================== 拟人化延迟 =====================
+
+def humanized_delay(emotion: str, msg_len: int) -> float:
+    lo, hi = EMOTION_DELAY.get(emotion, (15, 70))
+    base = random.uniform(lo, hi)
+    # 消息越长，思考越久（每 20 字 +3~8s）
+    base += (msg_len // 20) * random.uniform(3, 8)
+    # 深夜/清晨更慢（像在玩手机偶尔回）
+    h = datetime.now().hour
+    if h < 7 or h >= 23:
+        base *= 1.4
+    return min(base, 240)  # 上限 4 分钟
+
+
+# ===================== 处理单个好友 =====================
+
+def process_friend(page: Page, cfg: AppConfig, friend: FriendConfig, *, dry_run: bool) -> dict[str, Any]:
+    result = {"friend": friend.name, "new": 0, "replied": False, "skipped": ""}
+    if not friend.enabled:
+        result["skipped"] = "disabled"; return result
+    if not in_active_hours(friend.active_hours):
+        result["skipped"] = f"outside({friend.active_hours})"; return result
+
+    history = load_history(friend.name)
+    last_reply = next((h.get("ts") for h in reversed(history) if h.get("role") == "assistant"), 0)
+    if last_reply:
+        gap = time.time() - float(last_reply)
+        if gap < friend.min_reply_interval_seconds:
+            result["skipped"] = f"min_interval({int(gap)}s<{friend.min_reply_interval_seconds}s)"
+            return result
+
+    if not open_friend_chat(page, friend.name):
+        result["skipped"] = "chat_open_failed"; return result
+
+    msgs = read_recent_messages(page, with_images=friend.enable_vision)
+    if not msgs:
+        result["skipped"] = "empty_chat"; return result
+    # 找最近一条"我发的"，其后的对方消息即新消息
+    last_mine = -1
+    for i, m in enumerate(msgs):
+        if m["role"] == "assistant":
+            last_mine = i
+    incoming = [m for m in msgs[last_mine + 1:] if m["role"] == "user"]
+    # 额外保险：若整段最后一条仍是我发的，说明对方尚未回复 / 没分享 -> 不回、不调 AI
+    if msgs[-1]["role"] == "assistant":
+        _log(f"[{friend.name}] 最后一条是我发的，对方无新消息，跳过（不调用 AI）")
+        result["skipped"] = "last_is_mine(no_reply_from_friend)"; return result
+    if not incoming:
+        result["skipped"] = "no_new_incoming(对方无新消息)"; return result
+
+    result["new"] = len(incoming)
+    text_incoming = [m["content"] for m in incoming if m["type"] == "text" and m["content"].strip()]
+    img_incoming = [m["img_b64"] for m in incoming if m.get("img_b64")]
+    merged_text = "\n".join(text_incoming)
+    _log(f"[{friend.name}] 收到 {len(incoming)} 条新消息(含图 {len(img_incoming)}): "
+         + " | ".join(c[:30] for c in text_incoming))
+
+    if random.random() > friend.reply_probability:
+        result["skipped"] = "random_skip"; return result
+
+    # 情绪识别
+    emotion = "neutral"
+    if cfg.emotion_on and friend.enable_emotion and merged_text:
+        emotion = detect_emotion(cfg, merged_text)
+        _log(f"[{friend.name}] 情绪: {EMOTION_CN.get(emotion, emotion)}")
+
+    extra_system = ""
+    if cfg.emotion_on:
+        extra_system += "\n" + EMOTION_TONE.get(emotion, "")
+
+    # 组成本轮要喂给模型的文本上下文
+    context_lines = []
+    for m in incoming:
+        if m["type"] == "text":
+            context_lines.append(f"对方：{m['content']}")
+        else:
+            context_lines.append(f"对方发来一张{m['type']}（需要看图片理解）")
+    prompt_text = "\n".join(context_lines)
+    if not prompt_text.strip():
+        result["skipped"] = "empty"; return result
+
+    # 多模态：把图片送给 vision 模型先"看懂"
+    vision_desc = ""
+    if friend.enable_vision and img_incoming:
+        vision_desc = chat_vision(
+            cfg, friend,
+            "用一句话描述这张私信里的图片/截图在说什么（如果有文字/表情包，请读出文字）。",
+            img_incoming, extra_system,
+        ) or ""
+        if vision_desc:
+            _log(f"[{friend.name}] 图片理解: {vision_desc[:60]}")
+            prompt_text += f"\n（对方图片内容：{vision_desc}）"
+
+    reply = chat_text(cfg, friend, [{"role": "user", "content": prompt_text}], extra_system)
+    if not reply:
+        result["skipped"] = "ai_returned_empty"; return result
+
+    # 长度裁剪 + 防暴露 AI 身份
+    if len(reply) > friend.max_reply_chars:
+        reply = reply[:friend.max_reply_chars].rstrip("，。！？,.!? ") + "…"
+    reply = re.sub(r"作为\s*(一个|一款)?\s*AI|我是\s*AI|人工智能", "我", reply, flags=re.IGNORECASE)
+
+    # 拟人化 emoji（按情绪加点表情文字）
+    if emotion in ("happy", "teasing") and random.random() < 0.5:
+        reply = reply.rstrip() + random.choice(["😄", "哈哈", "[捂脸]", "[旺柴]"])
+    elif emotion in ("sad", "need_care") and random.random() < 0.4:
+        reply = reply.rstrip() + random.choice(["🥺", "[抱抱]", "😢"])
+
+    _log(f"[{friend.name}] AI 拟回复: {reply}")
+
+    if dry_run:
+        result["replied"] = "DRY-RUN"; return result
+
+    # 拟人化延迟后再发
+    delay = humanized_delay(emotion, len(merged_text))
+    _log(f"[{friend.name}] 拟人化延迟 {delay:.0f}s 后发送")
+    time.sleep(delay)
+
+    if send_text(page, reply):
+        now = time.time()
+        for m in incoming:
+            history.append({"role": "user", "content": m["content"], "ts": now})
+        history.append({"role": "assistant", "content": reply, "ts": now,
+                        "emotion": emotion})
+        save_history(friend.name, history)
+        result["replied"] = True
+    else:
+        result["skipped"] = "send_failed"
+    return result
+
+
+# ===================== 主入口 =====================
+
+def run(*, dry_run: bool = False, only_friend: str | None = None) -> int:
+    try:
+        cfg = load_config()
+    except Exception as e:
+        _log(f"[启动] 配置读取失败: {e}"); return 2
+    if not cfg.providers or all(not p.api_key for p in cfg.providers):
+        _log("[启动] 没有任何 provider 配置了有效 api_key"); return 2
+
+    targets = list(cfg.friends.values())
+    if only_friend:
+        targets = [f for f in targets if f.name == only_friend]
+        if not targets:
+            _log(f"[启动] 没找到好友 {only_friend}"); return 0
+
+    with sync_playwright() as pw:
+        try:
+            ctx = build_context(pw)
+        except Exception as e:
+            _log(f"[启动] 浏览器初始化失败: {e}"); return 3
+        page = ctx.new_page()
+        try:
+            goto_messages(page)
+        except Exception as e:
+            _log(f"[启动] 进入私信页失败: {e}"); ctx.close(); return 3
+
+        for f in targets:
+            try:
+                r = process_friend(page, cfg, f, dry_run=dry_run)
+                _log(f"[摘要] {r}")
+                time.sleep(random.uniform(1.5, 3.5))
+            except Exception as e:
+                _log(f"[异常] 处理 {f.name}: {e}")
+        ctx.close()
+    _log("[本轮完成]")
+    return 0
+
+
+def show_stats() -> None:
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for fp in HISTORY_DIR.glob("*.json"):
+        try:
+            data = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        n = len(data)
+        last = data[-1].get("ts", 0) if n else 0
+        last_str = datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M") if last else "-"
+        rows.append((fp.stem, n, last_str))
+    rows.sort(key=lambda x: x[2], reverse=True)
+    print(f"{'好友':<22} {'条数':>6}  {'最后一条'}")
+    print("-" * 46)
+    for name, n, last in rows:
+        print(f"{name:<22} {n:>6}  {last}")
+    if not rows:
+        print("暂无历史")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="抖音私信 AI 自动回复（多模态版）")
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--friend", type=str, default=None)
+    p.add_argument("--stats", action="store_true")
+    args = p.parse_args()
+    if args.stats:
+        show_stats(); return
+    sys.exit(run(dry_run=args.dry_run, only_friend=args.friend))
+
+
+if __name__ == "__main__":
+    main()

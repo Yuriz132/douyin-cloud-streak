@@ -1,0 +1,16 @@
+# 敏感信息：不进版本控制
+state.json
+ai_config.json
+ai_config.local.json
+history/
+*.log
+ai_reply_cron.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 浏览器
+.playwright/
