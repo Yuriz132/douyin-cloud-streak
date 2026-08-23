@@ -1061,8 +1061,18 @@
           success: true
         });
 
-        const getToken = () => localStorage.getItem('dcs_auth_token') || 'spark_secret_token_change_me';
-        const setToken = (t) => localStorage.setItem('dcs_auth_token', t);
+        const getToken = () => {
+          if (typeof window !== 'undefined' && window.__SERVER_AUTH_TOKEN__) {
+            return window.__SERVER_AUTH_TOKEN__;
+          }
+          return localStorage.getItem('dcs_auth_token') || 'spark_secret_token_change_me';
+        };
+        const setToken = (t) => {
+          if (typeof window !== 'undefined') {
+            window.__SERVER_AUTH_TOKEN__ = t;
+          }
+          localStorage.setItem('dcs_auth_token', t);
+        };
 
         const api = axios.create();
         api.interceptors.request.use((req) => {
@@ -1330,6 +1340,9 @@
         };
 
         onMounted(() => {
+          if (typeof window !== 'undefined' && window.__SERVER_AUTH_TOKEN__) {
+            setToken(window.__SERVER_AUTH_TOKEN__);
+          }
           loadAll();
           setInterval(loadStatus, 10000);
         });

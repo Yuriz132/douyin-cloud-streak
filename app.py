@@ -21,7 +21,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import uvicorn
 from fastapi import Body, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -330,9 +330,15 @@ class SelectionBody(BaseModel):
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(
-        STATIC_DIR / "index.html",
+def index() -> HTMLResponse:
+    html_file = STATIC_DIR / "index.html"
+    html_content = html_file.read_text(encoding="utf-8")
+    # 自动注入云端实际生效的 AUTH_TOKEN，实现网页端零配置秒级免输令牌访问！
+    token_inject = f'<script>window.__SERVER_AUTH_TOKEN__ = "{AUTH_TOKEN}";</script>'
+    if "</head>" in html_content:
+        html_content = html_content.replace("</head>", f"  {token_inject}\n</head>")
+    return HTMLResponse(
+        content=html_content,
         headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
     )
 
