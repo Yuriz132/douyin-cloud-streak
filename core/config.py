@@ -1,4 +1,4 @@
-"""配置读写。配置保存在 data/config.json，由网页端编辑。"""
+"""配置读写。配置保存在 data/config.json（默认账号）或 data/accounts/{id}/config.json，由网页端编辑。"""
 
 from __future__ import annotations
 
@@ -8,24 +8,47 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
+ACCOUNTS_DIR = DATA_DIR / "accounts"
 CONFIG_PATH = DATA_DIR / "config.json"
 STATE_PATH = DATA_DIR / "state.json"
 ROOT_STATE_PATH = BASE_DIR / "state.json"
 
+# 兼容旧版直接引用（默认账号即 data/ 根目录）
+DEFAULT_ACCOUNT_ID = "default"
 
-def get_valid_state_path() -> Path | None:
-    """自动兼容并双向自愈检查 data/state.json 与根目录 state.json"""
-    if STATE_PATH.exists() and STATE_PATH.stat().st_size > 30:
-        return STATE_PATH
-    if ROOT_STATE_PATH.exists() and ROOT_STATE_PATH.stat().st_size > 30:
+
+def account_dir(account_id: str | None = None) -> Path:
+    """返回账号数据目录。默认账号（None 或 'default'）使用旧版 data/ 根目录，零迁移兼容。"""
+    aid = account_id or DEFAULT_ACCOUNT_ID
+    if aid == DEFAULT_ACCOUNT_ID:
+        return DATA_DIR
+    return ACCOUNTS_DIR / aid
+
+
+def account_config_path(account_id: str | None = None) -> Path:
+    return account_dir(account_id) / "config.json"
+
+
+def account_state_path(account_id: str | None = None) -> Path:
+    return account_dir(account_id) / "state.json"
+
+
+def get_valid_state_path(account_id: str | None = None) -> Path | None:
+    """自动兼容并双向自愈检查账号目录 state.json 与根目录 state.json（仅默认账号）。"""
+    aid = account_id or DEFAULT_ACCOUNT_ID
+    sp = account_state_path(aid)
+    if sp.exists() and sp.stat().st_size > 30:
+        return sp
+    if aid == DEFAULT_ACCOUNT_ID and ROOT_STATE_PATH.exists() and ROOT_STATE_PATH.stat().st_size > 30:
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             import shutil
-            shutil.copy2(ROOT_STATE_PATH, STATE_PATH)
+            shutil.copy2(ROOT_STATE_PATH, sp)
         except Exception:
             pass
-        return STATE_PATH
+        return sp
     return None
+
 
 DEFAULT_CONFIG = {
     "schedule_time": "21:00",   # 每天发送时间 HH:MM（服务器时区 Asia/Shanghai）
@@ -48,11 +71,13 @@ DEFAULT_CONFIG = {
 _lock = threading.Lock()
 
 
-def load_config() -> dict:
+def load_config(account_id: str | None = None) -> dict:
+    aid = account_id or DEFAULT_ACCOUNT_ID
     cfg = dict(DEFAULT_CONFIG)
-    if CONFIG_PATH.exists():
+    cpath = account_config_path(aid)
+    if cpath.exists():
         try:
-            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            data = json.loads(cpath.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 cfg.update(data)
         except Exception:
@@ -60,7 +85,8 @@ def load_config() -> dict:
     return cfg
 
 
-def save_config(cfg: dict | None) -> dict:
+def save_config(cfg: dict | None, account_id: str | None = None) -> dict:
+    aid = account_id or DEFAULT_ACCOUNT_ID
     merged = dict(DEFAULT_CONFIG)
     if cfg:
         merged.update(cfg)
@@ -92,6 +118,8 @@ def save_config(cfg: dict | None) -> dict:
     merged["schedule_harvest_day"] = day if day in {"mon", "tue", "wed", "thu", "fri", "sat", "sun", "off"} else "off"
 
     with _lock:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_PATH.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        d = account_dir(aid)
+        d.mkdir(parents=True, exist_ok=True)
+        cpath = account_config_path(aid)
+        cpath.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
     return merged

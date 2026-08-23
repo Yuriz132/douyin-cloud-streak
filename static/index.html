@@ -652,6 +652,20 @@
           <span class="brand-title">抖音自动续火花</span>
         </div>
         <div class="topbar-right">
+          <el-select
+            v-model="currentAccountId"
+            size="small"
+            placeholder="选择账号"
+            style="width: 130px; flex-shrink: 0;"
+            @change="switchAccount"
+          >
+            <el-option
+              v-for="acc in accounts"
+              :key="acc.id"
+              :label="(acc.is_default ? '★ ' : '') + acc.name"
+              :value="acc.id"
+            />
+          </el-select>
           <span class="status-pill" :class="status.state_file_exists ? 'status-ok' : 'status-bad'">
             <span class="status-dot"></span>
             {{ status.state_file_exists ? '已就绪' : '未登录' }}
@@ -689,7 +703,84 @@
 
         <!-- 主视图区 -->
         <main class="main-view">
-          <!-- 1. 运行概览页 -->
+          <!-- 0. 账号管理页 -->
+        <div v-show="tab === 'accounts'">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">👤 多账号管理</h3>
+                <p class="card-desc">每个账号拥有独立的登录凭证、配置与好友台账，互不干扰；全局最多 {{ maxConcurrent }} 个浏览器并发运行。</p>
+              </div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <el-button type="primary" size="small" class="btn-action-primary" @click="accountDialogVisible = true">
+                  + 新建账号
+                </el-button>
+                <el-button size="small" @click="loadAccounts">刷新</el-button>
+              </div>
+            </div>
+
+            <div v-if="accounts.length === 0" style="text-align: center; padding: 30px; color: var(--text-muted); font-size: 13px;">
+              暂无账号，点击「新建账号」添加第一个账号。
+            </div>
+
+            <div class="mobile-stack-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px;">
+              <div
+                v-for="acc in accounts"
+                :key="acc.id"
+                class="contact-card-row"
+                style="align-items: flex-start; cursor: default; flex-direction: column; gap: 8px;"
+                :style="currentAccountId === acc.id ? 'border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary);' : ''"
+              >
+                <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px;">
+                  <div style="font-weight: 600; font-size: 14px; color: var(--text-main);">
+                    {{ acc.is_default ? '★ ' : '' }}{{ acc.name }}
+                    <span v-if="acc.is_default" style="font-size: 11px; color: var(--text-light); font-weight: 400;">(默认)</span>
+                  </div>
+                  <el-switch
+                    v-model="acc.enabled"
+                    :disabled="acc.is_default"
+                    active-text="启用"
+                    inactive-text="停用"
+                    style="transform: scale(0.85);"
+                    @change="updateAccountMeta(acc)"
+                  />
+                </div>
+
+                <div style="font-size: 12px; color: var(--text-muted); width: 100%;">
+                  <div>账号 ID：<code style="font-size: 11px;">{{ acc.id }}</code></div>
+                  <div style="margin-top: 2px;">登录态：{{ acc.state_file_exists ? '✓ 已就绪' : '✗ 未上传' }}</div>
+                  <div style="margin-top: 2px;">会话状态：{{ sessionText(acc) }}</div>
+                  <div v-if="acc.next_run" style="margin-top: 2px;">下次定时：{{ formatTime(acc.next_run) }}</div>
+                  <div v-if="acc.device" style="margin-top: 2px;">备注：{{ acc.device }}</div>
+                </div>
+
+                <div style="display: flex; gap: 6px; flex-wrap: wrap; width: 100%;">
+                  <el-button size="small" :type="currentAccountId === acc.id ? 'primary' : 'default'" @click="switchAccount(acc.id)">
+                    {{ currentAccountId === acc.id ? '当前查看' : '切换到此账号' }}
+                  </el-button>
+                  <el-button v-if="!acc.is_default" size="small" type="danger" plain @click="removeAccount(acc)">
+                    删除
+                  </el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 并发状态提示 -->
+          <div class="card" style="margin-top: 12px;">
+            <div class="card-header">
+              <div>
+                <h3 class="card-title">⚙️ 全局并发状态</h3>
+                <p class="card-desc">同时运行的浏览器会话数受全局上限保护，超出后新任务会自动排队等待。</p>
+              </div>
+            </div>
+            <div style="font-size: 13px; color: var(--text-regular);">
+              并发上限：<strong>{{ maxConcurrent }}</strong> 个浏览器会话 · 当前可用：<strong>{{ browserSlotsAvailable }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1. 运行概览页 -->
           <div v-show="tab === 'overview'">
             <!-- 指标统计条 -->
             <div class="stats-grid" style="margin-bottom: 16px;">
@@ -960,13 +1051,17 @@
               <div style="display: flex; flex-direction: column; gap: 16px; max-width: 520px;">
                 <div style="padding: 16px; background: var(--bg-surface-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
                   <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">
-                    当前凭证状态: 
+                    当前账号：<strong>{{ currentAccount.name }}</strong>
+                    <span style="font-size: 12px; color: var(--text-muted);">({{ currentAccount.id }})</span>
+                  </div>
+                  <div style="font-size: 13px; font-weight: 600; margin-bottom: 6px;">
+                    凭证状态: 
                     <span :style="{ color: status.state_file_exists ? '#16a34a' : '#dc2626' }">
                       {{ status.state_file_exists ? '✓ 已检测到有效登录态' : '✗ 未检测到登录态' }}
                     </span>
                   </div>
                   <div style="font-size: 12.5px; color: var(--text-muted);">
-                    若凭证过期失效，请在电脑端双击 <code>1.本地提取通行证.bat</code> 扫码，或在下方直接上传新生成的 <code>state.json</code>。
+                    若凭证过期失效，请在电脑端双击 <code>1.本地提取通行证.bat</code> 扫码，或在下方直接上传新生成的 <code>state.json</code>。上传会写入当前账号目录。
                   </div>
                 </div>
 
@@ -982,6 +1077,27 @@
         </main>
       </div>
     </div>
+
+    <!-- 新建账号弹窗 -->
+    <el-dialog v-model="accountDialogVisible" title="新建抖音账号" width="90%" style="max-width: 440px;">
+      <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6;">
+        新建后该账号拥有独立的 <code>data/accounts/{id}/</code> 目录（登录凭证、配置、好友台账互不影响），随后请为其上传对应的 <code>state.json</code> 登录凭证。
+      </div>
+      <el-form label-position="top">
+        <el-form-item label="账号名称（必填）">
+          <el-input v-model="newAccountName" placeholder="例如：主号 / 小号 / 备用号" clearable maxlength="20" />
+        </el-form-item>
+        <el-form-item label="备注（可选）">
+          <el-input v-model="newAccountDevice" placeholder="例如：日常主用手机 / 工作室电脑" clearable maxlength="50" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+          <el-button @click="accountDialogVisible = false">取消</el-button>
+          <el-button type="primary" class="btn-action-primary" @click="createAccount">创建账号</el-button>
+        </div>
+      </template>
+    </el-dialog>
 
     <!-- 安全令牌弹窗 -->
     <el-dialog v-model="tokenDialogVisible" title="管理后台安全令牌 (Token)" width="90%" style="max-width: 440px;" :close-on-click-modal="false">
@@ -1038,6 +1154,7 @@
         const logsContent = ref('');
 
         const navItems = [
+          { name: 'accounts', label: '账号', icon: 'users' },
           { name: 'overview', label: '概览', icon: 'grid' },
           { name: 'friends', label: '好友', icon: 'users' },
           { name: 'settings', label: '定时', icon: 'clock' },
@@ -1049,6 +1166,14 @@
           state_file_exists: false,
           running: false,
         });
+
+        const currentAccountId = ref('default');
+        const accounts = ref([]);
+        const maxConcurrent = ref(5);
+        const browserSlotsAvailable = ref(5);
+        const accountDialogVisible = ref(false);
+        const newAccountName = ref('');
+        const newAccountDevice = ref('');
 
         const config = reactive({
           schedule_time: '21:00',
@@ -1083,6 +1208,11 @@
         const api = axios.create();
         api.interceptors.request.use((req) => {
           req.headers['x-auth-token'] = getToken();
+          if (req.params) {
+            req.params = { ...req.params, account_id: currentAccountId.value };
+          } else {
+            req.params = { account_id: currentAccountId.value };
+          }
           return req;
         });
         api.interceptors.response.use(
@@ -1133,6 +1263,101 @@
             console.error('Failed to load status', e);
           }
         };
+
+        const loadAccounts = async () => {
+          try {
+            const res = await api.get('/api/accounts', { params: {} });
+            accounts.value = res.data.accounts || [];
+            maxConcurrent.value = res.data.max_concurrent ?? 5;
+            browserSlotsAvailable.value = res.data.browser_slots_available ?? res.data.max_concurrent ?? 5;
+            if (accounts.value.length === 0) {
+              accounts.value = [{ id: 'default', name: '默认账号', is_default: true }];
+            }
+            if (!accounts.value.some(a => a.id === currentAccountId.value)) {
+              currentAccountId.value = accounts.value[0].id;
+            }
+          } catch (e) {
+            console.error('Failed to load accounts', e);
+          }
+        };
+
+        const sessionText = (acc) => {
+          const map = { ok: '正常', partial: '部分成功', expired: '登录已过期', failed: '运行失败' };
+          return map[acc.session_status] || '未知';
+        };
+
+        const switchAccount = async (id) => {
+          if (!id) return;
+          currentAccountId.value = id;
+          status.state_file_exists = false;
+          status.running = false;
+          await loadAll();
+        };
+
+        const createAccount = async () => {
+          const name = (newAccountName.value || '').trim();
+          if (!name) {
+            ElementPlus.ElMessage.warning('请输入账号名称');
+            return;
+          }
+          try {
+            const res = await api.post('/api/accounts', { name, device: newAccountDevice.value });
+            if (res.data.ok) {
+              ElementPlus.ElMessage.success(`账号「${res.data.account.name}」创建成功！`);
+              newAccountName.value = '';
+              newAccountDevice.value = '';
+              accountDialogVisible.value = false;
+              await loadAccounts();
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('创建失败: ' + (e.response?.data?.detail || e.message));
+          }
+        };
+
+        const updateAccountMeta = async (acc) => {
+          try {
+            const res = await api.put(`/api/accounts/${acc.id}`, {
+              name: acc.name, device: acc.device, enabled: acc.enabled
+            });
+            if (res.data.ok) {
+              ElementPlus.ElMessage.success('账号信息已保存');
+              await loadAccounts();
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message));
+          }
+        };
+
+        const removeAccount = async (acc) => {
+          if (acc.is_default) return;
+          try {
+            const confirmed = await ElementPlus.ElMessageBox.confirm(
+              `确定删除账号「${acc.name}」？其数据目录将归档到 data/archived/。`,
+              '删除账号', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+            );
+            const res = await api.delete(`/api/accounts/${acc.id}`);
+            if (res.data.ok) {
+              ElementPlus.ElMessage.success('账号已删除');
+              if (currentAccountId.value === acc.id) {
+                await loadAccounts();
+                currentAccountId.value = 'default';
+                await switchAccount('default');
+              } else {
+                await loadAccounts();
+              }
+            }
+          } catch (e) {
+            if (e !== 'cancel') {
+              ElementPlus.ElMessage.error('删除失败: ' + (e.response?.data?.detail || e.message));
+            }
+          }
+        };
+
+        const currentAccount = computed(() => {
+          return accounts.value.find(a => a.id === currentAccountId.value) || {
+            id: currentAccountId.value, name: currentAccountId.value, is_default: true
+          };
+        });
 
         const loadConfig = async () => {
           try {
@@ -1185,6 +1410,7 @@
         };
 
         const loadAll = async () => {
+          await loadAccounts();
           await Promise.all([loadStatus(), loadConfig(), loadLedger(), fetchLogs()]);
         };
 
@@ -1357,6 +1583,15 @@
           tab,
           navItems,
           status,
+          currentAccountId,
+          accounts,
+          currentAccount,
+          maxConcurrent,
+          browserSlotsAvailable,
+          sessionText,
+          accountDialogVisible,
+          newAccountName,
+          newAccountDevice,
           config,
           messagesText,
           contacts,
@@ -1375,6 +1610,11 @@
           ICONS,
           formatTime,
           loadAll,
+          loadAccounts,
+          switchAccount,
+          createAccount,
+          updateAccountMeta,
+          removeAccount,
           runStreak,
           resetRunningState,
           syncContacts,

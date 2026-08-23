@@ -31,7 +31,7 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 from core.automation import fetch_chat_contacts, run_send, sync_contacts
-from core.config import DATA_DIR, load_config, save_config
+from core.config import DEFAULT_ACCOUNT_ID, account_state_path, load_config, save_config
 from core.ledger import (
     get_selected,
     load_ledger,
@@ -39,15 +39,17 @@ from core.ledger import (
     set_selected,
 )
 from core.runtime import load_runtime, record_contacts, record_run, setup_logging
+from core.accounts import list_accounts
 
 
-def sync_local_state() -> bool:
-    """如果根目录下存在 state.json，自动同步到 data/state.json。"""
+def sync_local_state(account_id: str | None = None) -> bool:
+    """如果根目录下存在 state.json，自动同步到 data/state.json（仅默认账号）。"""
+    aid = account_id or DEFAULT_ACCOUNT_ID
     root_state = BASE_DIR / "state.json"
-    data_state = DATA_DIR / "state.json"
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    data_state = account_state_path(aid)
+    data_state.parent.mkdir(parents=True, exist_ok=True)
 
-    if root_state.exists() and not data_state.exists():
+    if aid == DEFAULT_ACCOUNT_ID and root_state.exists() and not data_state.exists():
         shutil.copy2(root_state, data_state)
         print(f"[✓] 已自动将根目录 {root_state.name} 导入到 {data_state}")
     return data_state.exists()
@@ -60,6 +62,8 @@ def parse_args():
     parser.add_argument("--auto-spark", action="store_true", help="自动勾选所有当前带火花的好友")
     parser.add_argument("--friends", type=str, default="", help="临时指定好友昵称（英文逗号隔开）")
     parser.add_argument("--headed", action="store_true", help="弹出浏览器窗口运行（默认无头后台运行）")
+    parser.add_argument("--account", type=str, default="", help="指定账号 ID（默认账号，可用 --list-accounts 查看）")
+    parser.add_argument("--list-accounts", action="store_true", help="列出全部账号")
     return parser.parse_args()
 
 
@@ -70,14 +74,14 @@ def print_banner():
     print("=" * 60)
 
 
-def auto_select_sparking_friends() -> list[dict]:
+def auto_select_sparking_friends(account_id: str | None = None) -> list[dict]:
     """如果未勾选好友，自动扫描台账中带火花的好友并设为已勾选。"""
-    ledger_data = load_ledger()
+    ledger_data = load_ledger(account_id)
     sparking = [x for x in ledger_data if x.get("streak_days", 0) > 0]
     if sparking:
         for x in ledger_data:
             x["selected"] = x.get("streak_days", 0) > 0
-        set_selected(ledger_data)
+        set_selected(ledger_data, account_id)
         return [x for x in ledger_data if x.get("selected")]
     return []
 
@@ -87,22 +91,32 @@ def main():
     logger = setup_logging()
     print_banner()
 
+    account_id = (args.account or "").strip() or DEFAULT_ACCOUNT_ID
+
+    if args.list_accounts:
+        print("\n[*] 当前配置的账号列表：")
+        for a in list_accounts():
+            mark = "★" if a["is_default"] else " "
+            print(f"  {mark} {a['id']:12s} {a['name']}  启用={a['enabled']}  state={'✓' if a['state_file_exists'] else '✗'}")
+        return
+
     # 1. 检查凭据
-    if not sync_local_state():
-        print("\n[❌ 错误] 未检测到登录凭证 data/state.json！")
-        print("👉 请先运行「1.本地提取通行证.bat」或执行 `python extract_cookie.py` 扫码登录。")
+    if not sync_local_state(account_id):
+        print("\n[❌ 错误] 未检测到登录凭证 state.json！")
+        print("👉 请先运行「1.本地提取通行证.bat」或执行 `python extract_cookie.py` 扫码登录，")
+        print(f"   或为账号 {account_id} 上传登录态。")
         sys.exit(1)
 
     # 2. 如果指定了仅同步联系人
     if args.sync_contacts:
         print("\n[*] 正在启动浏览器同步抖音联系人列表...")
-        res = sync_contacts()
+        res = sync_contacts(account_id)
         if res.get("error"):
             print(f"[❌ 同步失败] {res['error']}")
             sys.exit(1)
         names = res.get("names", [])
-        stats = merge_consumer_contacts(names)
-        record_contacts(res)
+        stats = merge_consumer_contacts(names, account_id)
+        record_contacts(res, account_id)
         print(f"[✓] 同步成功！共获取联系人 {len(names)} 人。")
         print(f"    - 新增: {stats.get('added', 0)} 人")
         print(f"    - 更新: {stats.get('updated', 0)} 人")
@@ -115,18 +129,18 @@ def main():
         only_names = [x.strip() for x in args.friends.split(",") if x.strip()]
         print(f"[*] 已指定临时发送目标 ({len(only_names)} 人): {', '.join(only_names)}")
     else:
-        cfg = load_config()
-        selected = get_selected()
+        cfg = load_config(account_id)
+        selected = get_selected(account_id)
 
         # 尝试从 config.json 的 friends 迁移
         if not selected and cfg.get("friends"):
             from core.ledger import import_config_friends
-            import_config_friends(cfg["friends"])
-            selected = get_selected()
+            import_config_friends(cfg["friends"], account_id)
+            selected = get_selected(account_id)
 
         # 智能检查：如果台账中有联系人但都没勾选，自动检测是否有带火花的好友
         if not selected:
-            ledger_data = load_ledger()
+            ledger_data = load_ledger(account_id)
             sparking = [x for x in ledger_data if x.get("streak_days", 0) > 0]
             if sparking or args.auto_spark:
                 print(f"\n[💡 智能识别] 检测到台账中有 {len(ledger_data)} 位联系人，其中 {len(sparking)} 位当前有火花标记：")
@@ -137,7 +151,7 @@ def main():
                         print(f"    {idx}. 好友 (🔥 {item.get('streak_days')} 天)")
 
                 # 自动为用户勾选这些带火花的好友
-                selected = auto_select_sparking_friends()
+                selected = auto_select_sparking_friends(account_id)
                 print(f"[✓] 已自动为您勾选这 {len(selected)} 位火花好友！")
 
         if not selected:
@@ -156,11 +170,11 @@ def main():
 
     # 4. 开始发送
     mode_str = "【模拟演练 (Dry Run)】" if args.dry_run else "【正式发送】"
-    print(f"\n[*] 任务启动中... 当前模式: {mode_str}")
+    print(f"\n[*] 任务启动中... 当前模式: {mode_str} (账号 {account_id})")
     start_time = time.time()
 
-    res = run_send(dry_run=args.dry_run, only_names=only_names)
-    record_run(res)
+    res = run_send(dry_run=args.dry_run, only_names=only_names, account_id=account_id)
+    record_run(res, account_id)
     elapsed = time.time() - start_time
 
     # 5. 输出总结

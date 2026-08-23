@@ -1,4 +1,4 @@
-"""好友台账：以会话显示名为键的本地持久化好友库。
+"""好友台账：以会话显示名为键的本地持久化好友库（每账号独立 ledger.json）。
 
 v1（P0）：仅 consumer 数据（显示名 + 火花天数 + 会话存在性 + 勾选状态 + 最后发送时间）。
 P1 起扩展 short_id / nickname / user_id / 置信度，业务主键升级为 short_id（不可变），
@@ -13,9 +13,12 @@ import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .config import DATA_DIR
+from .config import DEFAULT_ACCOUNT_ID, account_dir
 
-LEDGER_PATH = DATA_DIR / "ledger.json"
+
+def ledger_path(account_id: str | None = None) -> Path:
+    return account_dir(account_id) / "ledger.json"
+
 
 _lock = threading.Lock()
 
@@ -54,11 +57,12 @@ def _norm_ws(s) -> str:
     return str(s or "").replace("\u00a0", " ").strip()
 
 
-def load_ledger() -> list[dict]:
+def load_ledger(account_id: str | None = None) -> list[dict]:
     entries: list[dict] = []
-    if LEDGER_PATH.exists():
+    lp = ledger_path(account_id)
+    if lp.exists():
         try:
-            data = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+            data = json.loads(lp.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 entries = [dict(e) for e in data if isinstance(e, dict) and e.get("display_name")]
                 for e in entries:
@@ -73,10 +77,12 @@ def load_ledger() -> list[dict]:
     return entries
 
 
-def _save(entries: list[dict]) -> None:
+def _save(entries: list[dict], account_id: str | None = None) -> None:
     with _lock:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        LEDGER_PATH.write_text(
+        d = account_dir(account_id)
+        d.mkdir(parents=True, exist_ok=True)
+        lp = ledger_path(account_id)
+        lp.write_text(
             json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
@@ -102,13 +108,13 @@ def _upsert(entries: list[dict], entry: dict) -> dict:
     return base
 
 
-def merge_consumer_contacts(contacts: list[dict]) -> dict:
+def merge_consumer_contacts(contacts: list[dict], account_id: str | None = None) -> dict:
     """把 consumer 会话列表（fetch_chat_contacts 的 names 字段）upsert 进台账。
 
     只更新火花天数与会话存在性，不覆盖用户勾选与历史发送时间。
     返回 {"added", "updated", "total"} 统计。
     """
-    entries = load_ledger()
+    entries = load_ledger(account_id)
     added = 0
     updated = 0
     for c in contacts or []:
@@ -131,18 +137,18 @@ def merge_consumer_contacts(contacts: list[dict]) -> dict:
         else:
             added += 1
     if added or updated:
-        _save(entries)
+        _save(entries, account_id)
     return {"added": added, "updated": updated, "total": len(entries)}
 
 
-def import_config_friends(friends: list[str]) -> dict:
+def import_config_friends(friends: list[str], account_id: str | None = None) -> dict:
     """兼容迁移：把 config.json 的 friends 同步进台账并默认勾选。
 
     - 已存在条目：置 selected=True（保持原发送目标集合不变）
     - 不存在条目：新增并 selected=True
     返回 {"added", "selected"}。
     """
-    entries = load_ledger()
+    entries = load_ledger(account_id)
     by_name = {e.get("display_name"): e for e in entries}
     added = 0
     selected = 0
@@ -163,22 +169,22 @@ def import_config_friends(friends: list[str]) -> dict:
             by_name[name] = entries[-1]
             added += 1
     if added or selected:
-        _save(entries)
+        _save(entries, account_id)
     return {"added": added, "selected": selected}
 
 
-def get_selected() -> list[dict]:
-    return [e for e in load_ledger() if e.get("selected")]
+def get_selected(account_id: str | None = None) -> list[dict]:
+    return [e for e in load_ledger(account_id) if e.get("selected")]
 
 
-def merge_creator_map(mapping: dict) -> dict:
+def merge_creator_map(mapping: dict, account_id: str | None = None) -> dict:
     """把 creator 采集的 {short_id: {nickname, user_id}} 合并进台账（预 join，乐观）。
 
     - display_name == nickname 或 display_name == short_id → 回填并 high（两侧确认同一人）
     - 否则新建条目：display_name=nickname（假定）、confidence=low、channel=creator
     返回 {"joined", "added", "updated", "total"}。
     """
-    entries = load_ledger()
+    entries = load_ledger(account_id)
     by_display = {e.get("display_name"): e for e in entries}
     # 归一化匹配：consumer 显示名可能含 NBSP（U+00A0），creator 昵称是普通空格。
     # 用「归一化名 → 条目列表」保留同名全部候选，避免 stub 覆盖真实条目。
@@ -267,17 +273,17 @@ def merge_creator_map(mapping: dict) -> dict:
             by_display[nick] = entries[-1]
             added += 1
     if added or updated:
-        _save(entries)
+        _save(entries, account_id)
     return {"joined": joined, "added": added, "updated": updated, "total": len(entries)}
 
 
-def confirm_join(display_name: str) -> None:
+def confirm_join(display_name: str, account_id: str | None = None) -> None:
     """发送时确认（P1 关键兜底）：该 display_name 的会话已在 consumer 页成功定位+标题校验通过。
 
     标记 source.consumer=true、channel=consumer；若 nickname == display_name（两侧名字一致）
     → join_confidence 升级为 high。
     """
-    entries = load_ledger()
+    entries = load_ledger(account_id)
     for e in entries:
         if e.get("display_name") == display_name:
             e.setdefault("source", {})["consumer"] = True
@@ -285,10 +291,10 @@ def confirm_join(display_name: str) -> None:
             if e.get("nickname") and e["nickname"] == display_name:
                 e["join_confidence"] = "high"
             break
-    _save(entries)
+    _save(entries, account_id)
 
 
-def set_selected(entries_in: list[dict]) -> dict:
+def set_selected(entries_in: list[dict], account_id: str | None = None) -> dict:
     """批量更新勾选与勾选顺序：entries: [{display_name, selected, selected_order}]。
 
     已存在条目更新勾选；不存在的条目新增并置勾选（支持手动添加好友）。
@@ -296,7 +302,7 @@ def set_selected(entries_in: list[dict]) -> dict:
     取消勾选时清空 selected_order。
     返回 {"updated", "added"}。
     """
-    entries = load_ledger()
+    entries = load_ledger(account_id)
     by_name = {e.get("display_name"): e for e in entries}
     updated = 0
     added = 0
@@ -325,7 +331,7 @@ def set_selected(entries_in: list[dict]) -> dict:
             by_name[name] = entries[-1]
             added += 1
     if updated or added:
-        _save(entries)
+        _save(entries, account_id)
     return {"updated": updated, "added": added}
 
 
@@ -334,6 +340,7 @@ def update_send_result(
     ok: bool,
     at: str | None = None,
     via_creator: bool = False,
+    account_id: str | None = None,
 ) -> None:
     """发送后回写台账：更新 last_sent_at；成功时标记会话存在。
 
@@ -341,23 +348,23 @@ def update_send_result(
     creator 侧发过首条消息 ≠ consumer 私信页有会话；否则 run_send 会误判
     走通道 A 去 consumer 页定位，而列表里根本没有该会话导致失败。
     """
-    entries = load_ledger()
+    entries = load_ledger(account_id)
     for e in entries:
         if e.get("display_name") == display_name:
             e["last_sent_at"] = at or _now()
             if ok and not via_creator:
                 e["has_conversation"] = True
             break
-    _save(entries)
+    _save(entries, account_id)
 
 
-def mark_no_consumer_conversation(display_name: str) -> None:
+def mark_no_consumer_conversation(display_name: str, account_id: str | None = None) -> None:
     """自愈：通道 A 在 consumer 页定位失败时调用（仅对 creator-only 条目）。
 
     把误标的 has_conversation 修正回 false，避免每轮都误走通道 A 失败；
     channel 保持 creator，之后走通道 B 或 skipped。
     """
-    entries = load_ledger()
+    entries = load_ledger(account_id)
     changed = False
     for e in entries:
         if e.get("display_name") == display_name and e.get("channel") == "creator":
@@ -366,12 +373,12 @@ def mark_no_consumer_conversation(display_name: str) -> None:
                 changed = True
             break
     if changed:
-        _save(entries)
+        _save(entries, account_id)
 
 
-def stats() -> dict:
+def stats(account_id: str | None = None) -> dict:
     """台账自愈报表：分布统计、连续成功 Top、low 待确认、近 7 天发送。"""
-    entries = load_ledger()
+    entries = load_ledger(account_id)
     now = datetime.now().astimezone()
     week_ago = (now - timedelta(days=7)).isoformat()
     high = sum(1 for e in entries if e.get("join_confidence") == "high")

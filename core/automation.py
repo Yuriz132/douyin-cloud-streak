@@ -16,7 +16,7 @@ from datetime import datetime
 
 from .browser import open_browser
 from . import ledger
-from .config import DATA_DIR, load_config
+from .config import DEFAULT_ACCOUNT_ID, account_state_path, load_config
 from .guard import detect_rate_limit
 from .msg_builder import build_message
 from .runtime import load_runtime, update_runtime
@@ -24,8 +24,6 @@ from .sender import creator_channel
 
 logger = logging.getLogger("douyin-cloud-streak")
 
-STATE_PATH = DATA_DIR / "state.json"
-SCREENSHOT_PATH = DATA_DIR / "last_error.png"
 CHAT_URL = "https://www.douyin.com/chat"
 LOGIN_TEXTS = ["扫码登录", "验证码登录", "登录后查看", "登录后即可"]
 
@@ -34,10 +32,11 @@ def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def _screenshot(page) -> None:
+def _screenshot(page, account_id: str | None = None) -> None:
     try:
-        page.screenshot(path=str(SCREENSHOT_PATH), timeout=5000)
-        logger.info("已保存页面截图: %s", SCREENSHOT_PATH)
+        path = account_state_path(account_id).with_name("last_error.png")
+        page.screenshot(path=str(path), timeout=5000)
+        logger.info("已保存页面截图: %s", path)
     except Exception:
         pass
 
@@ -334,15 +333,17 @@ def _scroll_and_extract(page, collected: list[dict], max_rounds: int = 20) -> No
         page.wait_for_timeout(1200)
 
 
-def fetch_chat_contacts() -> dict:
+def fetch_chat_contacts(account_id: str | None = None) -> dict:
     """从抖音私信页左侧聊天列表读取联系人（含火花天数），供网页端勾选。"""
+    aid = account_id or DEFAULT_ACCOUNT_ID
     result = {"at": _now(), "names": [], "error": None}
-    if not STATE_PATH.exists():
-        result["error"] = "尚未上传登录态 state.json"
+    state = account_state_path(aid)
+    if not state.exists():
+        result["error"] = "该账号尚未上传登录态 state.json"
         return result
 
     try:
-        with open_browser() as (p, browser, context, page):
+        with open_browser(state_path=state) as (p, browser, context, page):
             if not _open_chat_page(page):
                 result["error"] = "无法打开抖音私信页面"
                 return result
@@ -382,21 +383,21 @@ def fetch_chat_contacts() -> dict:
 # ── 通道选择 ───────────────────────────────────────────────────────────────
 
 
-def _b_channel_daily() -> tuple[str, int]:
+def _b_channel_daily(account_id: str | None = None) -> tuple[str, int]:
     """通道 B 今日已发条数：优先 runtime 计数，跨天自动归零。"""
     today = datetime.now().astimezone().date().isoformat()
-    rec = load_runtime().get("b_channel_daily") or {}
+    rec = load_runtime(account_id).get("b_channel_daily") or {}
     if rec.get("date") != today:
         return today, 0
     return today, int(rec.get("count", 0) or 0)
 
 
-def compute_pending(cfg: dict | None = None) -> list[dict]:
+def compute_pending(cfg: dict | None = None, account_id: str | None = None) -> list[dict]:
     """预测本次运行会真实发送的名单（与 run_send 通道判定一致）。"""
-    cfg = cfg or load_config()
-    entries = ledger.get_selected()
+    cfg = cfg or load_config(account_id)
+    entries = ledger.get_selected(account_id)
     daily_limit = max(1, int(cfg.get("first_message_daily_limit", 1) or 1))
-    _, creator_sent_today = _b_channel_daily()
+    _, creator_sent_today = _b_channel_daily(account_id)
     allow_first = bool(cfg.get("allow_first_message"))
     pending: list[dict] = []
     for e in entries:
@@ -410,38 +411,38 @@ def compute_pending(cfg: dict | None = None) -> list[dict]:
 # ── 主发送流程 ─────────────────────────────────────────────────────────────
 
 
-def _send_consumer(page, entry: dict, msg: str, dry_run: bool, result: dict) -> None:
+def _send_consumer(page, entry: dict, msg: str, dry_run: bool, result: dict, account_id: str | None = None) -> None:
     """通道 A：consumer 重防护发送。"""
     name = entry["display_name"]
     ok, why = send_to_contact(page, name, msg, dry_run)
     if ok:
         result["ok"].append(name)
-        ledger.confirm_join(name)
-        logger.info("已发送给 %s：%s", name, msg if not dry_run else "(干跑)")
+        ledger.confirm_join(name, account_id)
+        logger.info("[%s] 已发送给 %s：%s", account_id, name, msg if not dry_run else "(干跑)")
     else:
         if entry.get("channel") == "creator":
             result["skipped"].append({
                 "name": name,
                 "reason": "consumer 定位失败（该好友为 creator-only），已降级跳过",
             })
-            ledger.mark_no_consumer_conversation(name)
+            ledger.mark_no_consumer_conversation(name, account_id)
         else:
             result["failed"].append({"name": name, "reason": why})
-            logger.warning("发送给 %s 失败：%s", name, why)
+            logger.warning("[%s] 发送给 %s 失败：%s", account_id, name, why)
             if detect_rate_limit(page):
                 result["rate_limited"] = True
-                logger.warning("疑似触发限流，停止本轮")
+                logger.warning("[%s] 疑似触发限流，停止本轮", account_id)
     if not dry_run:
-        ledger.update_send_result(name, ok, _now())
+        ledger.update_send_result(name, ok, _now(), account_id=account_id)
 
 
-def _send_creator(entry: dict, msg: str, dry_run: bool, result: dict, p) -> None:
+def _send_creator(entry: dict, msg: str, dry_run: bool, result: dict, p, account_id: str | None = None) -> None:
     """通道 B：creator 首条消息。"""
     name = entry["display_name"]
-    cfg = load_config()
+    cfg = load_config(account_id)
     allow_first = bool(cfg.get("allow_first_message"))
     daily_limit = max(1, int(cfg.get("first_message_daily_limit", 1) or 1))
-    today, count = _b_channel_daily()
+    today, count = _b_channel_daily(account_id)
 
     if not allow_first:
         result["skipped"].append({"name": name, "reason": "无会话且未开启「允许首条消息」"})
@@ -453,24 +454,25 @@ def _send_creator(entry: dict, msg: str, dry_run: bool, result: dict, p) -> None
         })
         return
 
-    ok, why = creator_channel.send_first_message(entry, msg, dry_run, p)
+    ok, why = creator_channel.send_first_message(entry, msg, dry_run, p, account_id)
     if ok:
         result["ok"].append(name)
-        logger.info("通道 B 已发送给 %s：%s", name, msg if not dry_run else "(干跑)")
+        logger.info("[%s] 通道 B 已发送给 %s：%s", account_id, name, msg if not dry_run else "(干跑)")
         if not dry_run:
-            ledger.update_send_result(name, True, _now(), via_creator=True)
-            update_runtime(b_channel_daily={"date": today, "count": count + 1})
+            ledger.update_send_result(name, True, _now(), via_creator=True, account_id=account_id)
+            update_runtime(account_id, b_channel_daily={"date": today, "count": count + 1})
     else:
         result["failed"].append({"name": name, "reason": f"通道B: {why}"})
-        logger.warning("通道 B 发送给 %s 失败：%s", name, why)
+        logger.warning("[%s] 通道 B 发送给 %s 失败：%s", account_id, name, why)
         if "限流" in why or "停止" in why:
             result["rate_limited"] = True
-            logger.warning("通道 B 触发限流，停止本轮")
+            logger.warning("[%s] 通道 B 触发限流，停止本轮", account_id)
 
 
-def run_send(dry_run: bool = False, only_names: list[str] | None = None) -> dict:
+def run_send(dry_run: bool = False, only_names: list[str] | None = None, account_id: str | None = None) -> dict:
     """主入口：从好友台账读取勾选目标，逐个发送。"""
-    cfg = load_config()
+    aid = account_id or DEFAULT_ACCOUNT_ID
+    cfg = load_config(aid)
     messages = cfg.get("messages") or ["🔥"]
     max_n = int(cfg.get("max_friends_per_run", 20) or 20)
     gap_min = max(1, int(cfg.get("send_gap_min", 6) or 6))
@@ -480,28 +482,30 @@ def run_send(dry_run: bool = False, only_names: list[str] | None = None) -> dict
         "at": _now(), "dry_run": bool(dry_run),
         "ok": [], "failed": [], "skipped": [],
         "logged_out": False, "rate_limited": False,
+        "account_id": aid,
     }
 
-    if not STATE_PATH.exists():
-        result["failed"].append({"name": "_system", "reason": "尚未上传登录态 state.json"})
+    state = account_state_path(aid)
+    if not state.exists():
+        result["failed"].append({"name": "_system", "reason": "该账号尚未上传登录态 state.json"})
         return result
 
-    targets = ledger.get_selected()
+    targets = ledger.get_selected(aid)
     if not targets and cfg.get("friends"):
-        stats = ledger.import_config_friends(cfg["friends"])
-        logger.info("已从 config.friends 迁移进台账：新增 %s 人，勾选 %s 人",
-                     stats["added"], stats["selected"])
-        targets = ledger.get_selected()
+        stats = ledger.import_config_friends(cfg["friends"], aid)
+        logger.info("[%s] 已从 config.friends 迁移进台账：新增 %s 人，勾选 %s 人",
+                     aid, stats["added"], stats["selected"])
+        targets = ledger.get_selected(aid)
     if only_names is not None:
         targets = [t for t in targets if t.get("display_name") in only_names]
     targets = targets[:max_n] if max_n > 0 else targets
 
     if not targets:
-        logger.info("未配置任何好友，跳过发送")
+        logger.info("[%s] 未配置任何好友，跳过发送", aid)
         return result
 
     try:
-        with open_browser() as (p, browser, context, page):
+        with open_browser(state_path=state) as (p, browser, context, page):
             if not _open_chat_page(page):
                 result["failed"].append({"name": "_system", "reason": "无法打开抖音私信页面"})
                 return result
@@ -511,22 +515,22 @@ def run_send(dry_run: bool = False, only_names: list[str] | None = None) -> dict
             if not logged:
                 result["logged_out"] = True
                 result["failed"].append({"name": "_system", "reason": why})
-                _screenshot(page)
+                _screenshot(page, aid)
                 return result
 
-            logger.info("待发送好友 %s 人，dry_run=%s", len(targets), dry_run)
+            logger.info("[%s] 待发送好友 %s 人，dry_run=%s", aid, len(targets), dry_run)
             for entry in targets:
                 msg = build_message(messages, last_sent_msg=str(entry.get("last_msg", "")))
                 if entry.get("has_conversation"):
-                    _send_consumer(page, entry, msg, dry_run, result)
+                    _send_consumer(page, entry, msg, dry_run, result, aid)
                 else:
-                    _send_creator(entry, msg, dry_run, result, p)
+                    _send_creator(entry, msg, dry_run, result, p, aid)
 
                 if result["rate_limited"]:
                     break
                 time.sleep(random.uniform(gap_min, gap_max))
     except Exception as e:
-        logger.error("运行异常: %s", e)
+        logger.error("[%s] 运行异常: %s", aid, e)
         result["failed"].append({"name": "_system", "reason": f"运行异常: {e}"})
     return result
 

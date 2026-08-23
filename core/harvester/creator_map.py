@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..browser import open_browser
-from ..config import DATA_DIR, load_config
+from ..config import DEFAULT_ACCOUNT_ID, account_state_path, load_config
 
 logger = logging.getLogger("douyin-cloud-streak")
 
@@ -101,16 +101,18 @@ def collect_short_id_map(
     max_scrolls: int | None = None,
     stop_when_found: bool = True,
     scroll_interval: float = 0.5,
+    account_id: str | None = None,
 ) -> dict:
     """打开 creator 消息页，滚动好友列表并拦截 user_detail 响应，采集 short_id 映射。
 
     返回 {"at", "mapping", "count", "hit", "sample_urls", "error"}
     """
+    aid = account_id or DEFAULT_ACCOUNT_ID
     result: dict = {
         "at": _now(), "mapping": {}, "count": 0, "hit": False,
         "sample_urls": [], "error": None,
     }
-    cfg = load_config()
+    cfg = load_config(aid)
     api_path = str(cfg.get("creator_user_detail_path") or "aweme/v1/creator/im/user_detail/")
     if max_scrolls is None:
         max_scrolls = int(cfg.get("creator_max_scrolls", 80) or 80)
@@ -121,7 +123,7 @@ def collect_short_id_map(
 
     try:
         ctx_kwargs = {"viewport": {"width": 1366, "height": 900}, "locale": "zh-CN"}
-        with open_browser(state_path, **ctx_kwargs) as (p, browser, context, page):
+        with open_browser(state_path or account_state_path(aid), **ctx_kwargs) as (p, browser, context, page):
             page.on("response", _on_response_factory(mapping, urls, api_path))
 
             page.goto(CREATOR_CHAT_URL, wait_until="domcontentloaded", timeout=90000)
@@ -176,7 +178,7 @@ if __name__ == "__main__":
         "sample_urls": res["sample_urls"],
         "sample_mapping": dict(list(res["mapping"].items())[:5]),
     }
-    report = DATA_DIR / "harvest_report.json"
+    report = account_state_path(aid).parent / "harvest_report.json"
     report.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
     print("采集完成，report ->", report)
     print("count:", res["count"], "hit:", res["hit"], "error:", res["error"])

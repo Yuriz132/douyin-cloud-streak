@@ -14,7 +14,7 @@ import logging
 import time
 
 from ..browser import open_browser
-from ..config import DATA_DIR, load_config
+from ..config import DEFAULT_ACCOUNT_ID, account_state_path, load_config
 from ..guard import detect_rate_limit
 
 logger = logging.getLogger("douyin-cloud-streak")
@@ -55,17 +55,20 @@ def send_first_message(
     msg_text: str,
     dry_run: bool = False,
     playwright: object | None = None,
+    account_id: str | None = None,
 ) -> tuple[bool, str]:
     """通过 creator 页给无会话好友发送首条消息。
 
     playwright 参数：复用调用方已启动的 sync playwright 实例。
     返回 (是否成功, 说明)。
     """
+    aid = account_id or DEFAULT_ACCOUNT_ID
     nickname = str(entry.get("nickname") or entry.get("display_name") or "").strip()
     if not nickname:
         return False, "台账缺少昵称/显示名，无法定位"
-    cfg = load_config()
+    cfg = load_config(aid)
     max_scrolls = int(cfg.get("creator_max_scrolls", 80) or 80)
+    state_file = str(account_state_path(aid))
 
     try:
         # 复用调用方的 playwright 实例
@@ -79,7 +82,7 @@ def send_first_message(
             )
             try:
                 context = browser.new_context(
-                    storage_state=str(DATA_DIR / "state.json"),
+                    storage_state=state_file,
                     viewport={"width": 1366, "height": 900},
                     locale="zh-CN",
                 )
@@ -93,7 +96,7 @@ def send_first_message(
                     pass
         else:
             ctx_kwargs = {"viewport": {"width": 1366, "height": 900}, "locale": "zh-CN"}
-            with open_browser(**ctx_kwargs) as (p, browser, context, page):
+            with open_browser(state_path=account_state_path(aid), **ctx_kwargs) as (p, browser, context, page):
                 return _do_send(page, context, nickname, msg_text, dry_run, max_scrolls)
     except Exception as e:
         logger.error("通道 B 发送异常: %s", e)

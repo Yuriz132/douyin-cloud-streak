@@ -4,6 +4,8 @@
 - 反爬对抗参数与真实 Chrome 指纹；
 - playwright_stealth 自动注入（若安装）；
 - 中文环境（zh-CN）与 Asia/Shanghai 时区模拟；
+- 全局并发信号量：最多 MAX_CONCURRENT_BROWSERS 个浏览器会话同时存在
+  （参考「抖音自动续火花 2.1」的会话池并发上限，防多账号同时开太多浏览器触发风控）；
 - 完善的生命周期管理与异常兜底。
 """
 
@@ -15,11 +17,10 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from .config import DATA_DIR, get_valid_state_path
+from .accounts import acquire_browser_slot, release_browser_slot
+from .config import account_state_path, get_valid_state_path
 
 logger = logging.getLogger("douyin-cloud-streak")
-
-_STATE_PATH = DATA_DIR / "state.json"
 
 _CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -59,11 +60,13 @@ def open_browser(state_path: Path | str | None = None, headless: bool = True, **
             ...
 
     退出 with 块时自动关闭浏览器和 playwright。
-    state_path 默认自愈寻找 data/state.json 或根目录 state.json。
+    state_path 默认自愈寻找账号目录 data/state.json 或根目录 state.json（默认账号）。
+    并发控制：进入时占用一个全局浏览器名额，超过上限会阻塞等待。
     """
     valid_state = Path(state_path) if state_path else get_valid_state_path()
     state_file = str(valid_state) if valid_state and valid_state.exists() else None
 
+    acquire_browser_slot()
     p = sync_playwright().start()
     browser = None
     try:
@@ -94,3 +97,4 @@ def open_browser(state_path: Path | str | None = None, headless: bool = True, **
             p.stop()
         except Exception:
             pass
+        release_browser_slot()

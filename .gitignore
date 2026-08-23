@@ -37,6 +37,8 @@ data/*.json
 data/*.pid
 data/*.log
 data/logs/
+data/accounts/
+data/archived/
 .env
 
 # 临时日志与异常截图
