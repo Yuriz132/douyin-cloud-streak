@@ -9,6 +9,23 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 CONFIG_PATH = DATA_DIR / "config.json"
+STATE_PATH = DATA_DIR / "state.json"
+ROOT_STATE_PATH = BASE_DIR / "state.json"
+
+
+def get_valid_state_path() -> Path | None:
+    """自动兼容并双向自愈检查 data/state.json 与根目录 state.json"""
+    if STATE_PATH.exists() and STATE_PATH.stat().st_size > 30:
+        return STATE_PATH
+    if ROOT_STATE_PATH.exists() and ROOT_STATE_PATH.stat().st_size > 30:
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(ROOT_STATE_PATH, STATE_PATH)
+        except Exception:
+            pass
+        return STATE_PATH
+    return None
 
 DEFAULT_CONFIG = {
     "schedule_time": "21:00",   # 每天发送时间 HH:MM（服务器时区 Asia/Shanghai）

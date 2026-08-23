@@ -26,7 +26,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from core import automation, ledger, scheduler
-from core.config import DATA_DIR, DEFAULT_CONFIG, load_config, save_config
+from core.config import (
+    DATA_DIR,
+    DEFAULT_CONFIG,
+    ROOT_STATE_PATH,
+    STATE_PATH,
+    get_valid_state_path,
+    load_config,
+    save_config,
+)
 from core.harvester import creator_map
 from core.runtime import (
     load_harvest_last,
@@ -338,8 +346,10 @@ def health() -> dict:
 def api_status(token: str = Header(default="", alias="X-Auth-Token")) -> dict:
     _check_auth(token)
     rt = load_runtime()
+    valid_state = get_valid_state_path()
     return {
-        "state_file_exists": STATE_PATH.exists(),
+        "state_file_exists": valid_state is not None,
+        "state_file_path": str(valid_state) if valid_state else None,
         "session_status": rt.get("session_status", "unknown"),
         "running": rt.get("running", False),
         "last_run": rt.get("last_run"),
@@ -347,7 +357,7 @@ def api_status(token: str = Header(default="", alias="X-Auth-Token")) -> dict:
         "next_harvest": scheduler.next_harvest_time(),
         "history_count": len(rt.get("history", [])),
         "auth_required": bool(AUTH_TOKEN),
-        "version": "0.1.0",
+        "version": "0.2.0",
     }
 
 
@@ -513,6 +523,7 @@ def api_reset_running(token: str = Header(default="", alias="X-Auth-Token")) -> 
 
 
 @app.post("/api/upload-state")
+@app.post("/api/credentials/upload")
 async def api_upload_state(
     file: UploadFile = File(...),
     token: str = Header(default="", alias="X-Auth-Token"),
@@ -529,6 +540,10 @@ async def api_upload_state(
         raise HTTPException(status_code=400, detail="缺少 cookies 字段，请确认是 Playwright 导出的登录态文件")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_bytes(raw)
+    try:
+        ROOT_STATE_PATH.write_bytes(raw)
+    except Exception:
+        pass
     logger.info("已更新登录态 state.json（%s 字节）", len(raw))
     return {"ok": True, "size": len(raw)}
 

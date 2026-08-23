@@ -15,7 +15,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from .config import DATA_DIR
+from .config import DATA_DIR, get_valid_state_path
 
 logger = logging.getLogger("douyin-cloud-streak")
 
@@ -59,10 +59,10 @@ def open_browser(state_path: Path | str | None = None, headless: bool = True, **
             ...
 
     退出 with 块时自动关闭浏览器和 playwright。
-    state_path 默认用 data/state.json；若文件不存在则不加载 storage_state。
+    state_path 默认自愈寻找 data/state.json 或根目录 state.json。
     """
-    target_state = Path(state_path) if state_path else _STATE_PATH
-    state_file = str(target_state) if target_state.exists() else None
+    valid_state = Path(state_path) if state_path else get_valid_state_path()
+    state_file = str(valid_state) if valid_state and valid_state.exists() else None
 
     p = sync_playwright().start()
     browser = None

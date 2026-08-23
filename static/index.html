@@ -713,9 +713,15 @@
               </div>
               <div class="stat-box">
                 <div class="stat-label">火花好友</div>
-                <div class="stat-value" style="color: #ea580c;">
-                  {{ sparkFriendCount }} <span style="font-size: 12px; color: var(--text-muted); font-weight: 400;">人</span>
-                </div>
+            <!-- 未检测到登录凭证时的醒目指引条 -->
+            <div v-if="!status.state_file_exists" style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+              <div style="font-size: 13px; color: #9f1239; line-height: 1.5;">
+                <strong>⚠️ 当前服务器未检测到登录凭证 (state.json)：</strong><br />
+                已在电脑端提取？请双击电脑上的 <code>4.同步登录态到服务器.bat</code> 一键同步，或在右侧直接上传文件。
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <input type="file" ref="quickFileInput" accept=".json" style="display: none;" @change="handleFileUpload" />
+                <el-button type="danger" size="small" @click="$refs.quickFileInput.click()">直接上传 state.json</el-button>
               </div>
             </div>
 
@@ -972,14 +978,26 @@
     </div>
 
     <!-- 安全令牌弹窗 -->
-    <el-dialog v-model="tokenDialogVisible" title="管理后台安全令牌 (Token)" width="90%" style="max-width: 420px;">
-      <p style="font-size: 13px; color: var(--text-muted); margin-top: 0;">
-        首次访问或部署在云服务器时，请输入服务器 <code>.env</code> 中配置的 <code>AUTH_TOKEN</code>。
-      </p>
-      <el-input v-model="tokenInput" placeholder="输入访问安全令牌" show-password />
+    <el-dialog v-model="tokenDialogVisible" title="管理后台安全令牌 (Token)" width="90%" style="max-width: 440px;" :close-on-click-modal="false">
+      <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6;">
+        <div>首次访问或部署在云服务器时，请输入服务器 <code>.env</code> 中配置的 <code>AUTH_TOKEN</code>。</div>
+        <div style="margin-top: 8px; padding: 8px 10px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: 6px; display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-size: 12px; color: var(--text-regular);">默认令牌: <code>spark_secret_token_change_me</code></span>
+          <el-button type="primary" link size="small" @click="tokenInput = 'spark_secret_token_change_me'">一键填入</el-button>
+        </div>
+      </div>
+      <el-input
+        v-model="tokenInput"
+        placeholder="输入安全令牌后按回车保存"
+        show-password
+        clearable
+        @keyup.enter="saveToken"
+      />
       <template #footer>
-        <el-button @click="tokenDialogVisible = false">取消</el-button>
-        <el-button type="primary" class="btn-action-primary" @click="saveToken">保存并应用</el-button>
+        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+          <el-button @click="tokenDialogVisible = false">取消</el-button>
+          <el-button type="primary" class="btn-action-primary" @click="saveToken">确认保存 (Enter)</el-button>
+        </div>
       </template>
     </el-dialog>
   </div>
@@ -1294,12 +1312,20 @@
           tokenDialogVisible.value = true;
         };
 
-        const saveToken = () => {
-          if (tokenInput.value.trim()) {
-            setToken(tokenInput.value.trim());
-            ElementPlus.ElMessage.success('安全令牌已更新！');
-            tokenDialogVisible.value = false;
-            loadAll();
+        const saveToken = async () => {
+          const val = (tokenInput.value || '').trim();
+          if (!val) {
+            ElementPlus.ElMessage.warning('请输入安全令牌！若未修改过请点击「一键填入」默认令牌。');
+            return;
+          }
+          setToken(val);
+          tokenDialogVisible.value = false;
+          try {
+            await loadAll();
+            ElementPlus.ElMessage.success('🎉 安全令牌已更新并验证成功！');
+          } catch (e) {
+            ElementPlus.ElMessage.error('❌ 安全令牌验证失败，请核对与服务器 .env 中的 AUTH_TOKEN 是否一致！');
+            tokenDialogVisible.value = true;
           }
         };
 
