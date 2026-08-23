@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  douyin-cloud-streak:
+    build: .
+    container_name: douyin-cloud-streak
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - AUTH_TOKEN=spark_secret_token_change_me
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/app/data

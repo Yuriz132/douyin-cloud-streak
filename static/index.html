@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>抖音自动续火花 · Douyin Cloud Streak</title>
+  <link rel="stylesheet" href="/static/vendor/element-plus.css" />
+  <style>
+    /* ==========================================================================
+       经典简约曜黑 / 现代极简移动端高保真设计体系 (Clean Black & White)
+       ========================================================================== */
+    :root {
+      --bg-page: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-subtle: #f1f5f9;
+      --bg-surface-hover: #e2e8f0;
+
+      --border-color: #e2e8f0;
+      --border-dark: #cbd5e1;
+      --border-focus: #0f172a;
+
+      --text-main: #0f172a;
+      --text-regular: #334155;
+      --text-muted: #64748b;
+      --text-light: #94a3b8;
+
+      --color-primary: #0f172a;
+      --color-fire: #ea580c;
+      --color-success: #16a34a;
+      --color-warning: #d97706;
+      --color-danger: #dc2626;
+
+      --font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --radius-full: 9999px;
+
+      --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+      --transition: all 0.15s ease;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      max-width: 100vw;
+      overflow-x: hidden;
+      background-color: var(--bg-page);
+      font-family: var(--font-family);
+      color: var(--text-main);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      line-height: 1.5;
+    }
+
+    /* 滚动条 */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: var(--radius-full); }
+
+    /* ==========================================================================
+       顶部导航栏 (Compact Responsive Header)
+       ========================================================================== */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: #ffffff;
+      border-bottom: 1px solid var(--border-color);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      width: 100%;
+    }
+    .topbar-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 16px;
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: nowrap;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .brand-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #ea580c;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .brand-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .status-pill.status-ok {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .status-pill.status-bad {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .btn-icon-top {
+      width: 30px;
+      height: 30px;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      background: #ffffff;
+      color: #334155;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+      transition: all 0.15s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn-icon-top:active {
+      background: #f1f5f9;
+    }
+
+    /* ==========================================================================
+       页面主体布局
+       ========================================================================== */
+    .app-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 16px 40px;
+      width: 100%;
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 18px;
+      align-items: start;
+      width: 100%;
+    }
+
+    /* 侧边导航 */
+    .side-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 8px;
+      box-shadow: var(--shadow-card);
+    }
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-regular);
+      font-size: 13.5px;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: var(--transition);
+      white-space: nowrap;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .nav-btn:hover {
+      background: var(--bg-surface-subtle);
+      color: var(--text-main);
+    }
+    .nav-btn.active {
+      background: #0f172a;
+      color: #ffffff;
+      font-weight: 600;
+    }
+    .nav-btn .icon {
+      width: 17px;
+      height: 17px;
+      flex-shrink: 0;
+    }
+
+    /* ==========================================================================
+       卡片容器 (Cards)
+       ========================================================================== */
+    .main-view {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      width: 100%;
+      min-width: 0;
+    }
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-card);
+      padding: 20px 22px;
+      width: 100%;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-main);
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .card-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 3px 0 0;
+      line-height: 1.4;
+    }
+
+    /* 数据指标看板 */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      width: 100%;
+    }
+    .stat-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      box-shadow: var(--shadow-card);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      transition: var(--transition);
+    }
+    .stat-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+    .stat-value {
+      font-size: 19px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-main);
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+    }
+
+    /* 按钮体系 */
+    .btn-action-primary {
+      background: #0f172a !important;
+      color: #ffffff !important;
+      border: 1px solid #0f172a !important;
+      border-radius: var(--radius-sm) !important;
+      font-weight: 600 !important;
+      transition: var(--transition) !important;
+    }
+    .btn-action-primary:hover {
+      background: #1e293b !important;
+      border-color: #1e293b !important;
+    }
+    .btn-action-fire {
+      background: #ea580c !important;
+      color: #ffffff !important;
+      border: 1px solid #ea580c !important;
+      border-radius: var(--radius-sm) !important;
+      font-weight: 600 !important;
+      transition: var(--transition) !important;
+    }
+    .btn-action-fire:hover {
+      background: #c2410c !important;
+      border-color: #c2410c !important;
+    }
+
+    /* ==========================================================================
+       桌面端与手机端好友列表
+       ========================================================================== */
+    .desktop-only-table { display: block; }
+    .mobile-only-cards { display: none; }
+
+    .table-box {
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      background: #ffffff;
+      width: 100%;
+    }
+    .el-table {
+      --el-table-bg-color: #ffffff !important;
+      --el-table-tr-bg-color: #ffffff !important;
+      --el-table-header-bg-color: #f8fafc !important;
+      --el-table-row-hover-bg-color: #f1f5f9 !important;
+      --el-table-border-color: #f1f5f9 !important;
+      font-size: 13.5px;
+    }
+
+    /* 手机端精美卡片式好友列表项 */
+    .contact-card-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      transition: all 0.15s ease;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      cursor: pointer;
+      width: 100%;
+    }
+    .contact-card-row:active {
+      background: #f8fafc;
+    }
+    .contact-card-row.is-selected {
+      border-color: #0f172a;
+      background: #f8fafc;
+    }
+    .chk-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .avatar-badge {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #f1f5f9;
+      color: #0f172a;
+      font-weight: 700;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: 1px solid #e2e8f0;
+    }
+    .user-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1;
+      min-width: 0;
+    }
+    .user-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #0f172a;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .user-sub {
+      font-size: 11.5px;
+      color: #64748b;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pill-group {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-shrink: 0;
+    }
+    .spark-pill {
+      color: #ea580c;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      padding: 2px 6px;
+      border-radius: 12px;
+      font-size: 11.5px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .no-spark-pill {
+      color: #94a3b8;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      padding: 2px 6px;
+      border-radius: 12px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .status-pill-sub {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .status-pill-sub.success {
+      background: #dcfce7;
+      color: #15803d;
+    }
+    .status-pill-sub.failed {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+    .status-pill-sub.pending {
+      background: #f1f5f9;
+      color: #64748b;
+    }
+
+    /* 日志控制台 */
+    .terminal-box {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      width: 100%;
+    }
+    .terminal-header {
+      background: #1e293b;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #94a3b8;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+    .terminal-body {
+      margin: 0;
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: #e2e8f0;
+      height: 380px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Element Plus 适配 */
+    .el-input__wrapper, .el-textarea__inner {
+      background-color: #ffffff !important;
+      border: 1px solid var(--border-color) !important;
+      box-shadow: none !important;
+      border-radius: var(--radius-sm) !important;
+      color: var(--text-main) !important;
+      font-size: 14px;
+    }
+    .el-form-item__label {
+      color: var(--text-main) !important;
+      font-weight: 500;
+      font-size: 13.5px;
+    }
+    .el-button {
+      border-radius: var(--radius-sm) !important;
+      font-weight: 500;
+    }
+    .icon-svg {
+      width: 15px;
+      height: 15px;
+      display: inline-block;
+      vertical-align: middle;
+      fill: currentColor;
+    }
+
+    /* ==========================================================================
+       📱 移动端针对性重构 (Mobile Optimization)
+       ========================================================================== */
+    @media (max-width: 768px) {
+      .app-container {
+        padding: 12px 10px calc(76px + env(safe-area-inset-bottom)) 10px;
+      }
+      .shell {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
+      /* 底部固定导航栏 */
+      .side-nav {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100vw !important;
+        max-width: 100vw !important;
+        box-sizing: border-box !important;
+        z-index: 9999 !important;
+        border-radius: 0 !important;
+        border: none !important;
+        border-top: 1px solid var(--border-color) !important;
+        background: rgba(255, 255, 255, 0.96) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        padding: 6px 8px calc(6px + env(safe-area-inset-bottom)) 8px !important;
+        box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06) !important;
+        flex-direction: row !important;
+        justify-content: space-around !important;
+        gap: 4px !important;
+        transform: translateZ(0) !important;
+      }
+      .nav-btn {
+        flex-direction: column;
+        gap: 3px;
+        padding: 6px 2px;
+        font-size: 11px;
+        text-align: center;
+        align-items: center;
+        flex: 1;
+        border-radius: var(--radius-sm);
+      }
+      .nav-btn .icon {
+        width: 18px;
+        height: 18px;
+      }
+      .nav-btn.active {
+        background: #0f172a;
+        color: #ffffff;
+      }
+
+      /* 隐藏桌面大表格，显示手机端轻量卡片 */
+      .desktop-only-table {
+        display: none !important;
+      }
+      .mobile-only-cards {
+        display: flex !important;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 480px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 6px;
+      }
+
+      /* 2x2 数据看板 */
+      .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+      .stat-box {
+        padding: 12px 12px;
+      }
+      .stat-label {
+        font-size: 11px;
+      }
+      .stat-value {
+        font-size: 17px;
+      }
+
+      /* 卡片与按钮组优化 */
+      .card {
+        padding: 14px 14px;
+        border-radius: var(--radius-sm);
+      }
+      .card-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .card-title {
+        font-size: 14px;
+      }
+      
+      .mobile-action-grid {
+        display: grid !important;
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 8px !important;
+        width: 100% !important;
+      }
+      .mobile-action-grid .el-button {
+        margin: 0 !important;
+        width: 100% !important;
+        height: 38px !important;
+        font-size: 13px !important;
+      }
+      .mobile-full-btn {
+        width: 100% !important;
+        margin: 0 !important;
+      }
+      .mobile-stack-grid {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+      }
+
+      .terminal-body {
+        height: 280px;
+        font-size: 11.5px;
+        padding: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部导航栏 -->
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <div class="brand-icon" v-html="ICONS.fire" aria-hidden="true"></div>
+          <span class="brand-title">抖音自动续火花</span>
+        </div>
+        <div class="topbar-right">
+          <span class="status-pill" :class="status.state_file_exists ? 'status-ok' : 'status-bad'">
+            <span class="status-dot"></span>
+            {{ status.state_file_exists ? '已就绪' : '未登录' }}
+          </span>
+          <el-button v-if="status.running" size="small" type="danger" plain @click="resetRunningState" style="padding: 0 8px; height: 26px; font-size: 11px;">
+            强制重置
+          </el-button>
+          <button type="button" class="btn-icon-top" title="刷新状态" @click="loadAll">
+            <span class="icon-svg" v-html="ICONS.reload"></span>
+          </button>
+          <button type="button" class="btn-icon-top" title="安全令牌" @click="showTokenDialog">
+            <span class="icon-svg" v-html="ICONS.key"></span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 主体容器 -->
+    <div class="app-container">
+      <div class="shell">
+        <!-- 侧边 / 底部导航栏 -->
+        <nav class="side-nav" aria-label="功能导航">
+          <button
+            v-for="item in navItems"
+            :key="item.name"
+            type="button"
+            class="nav-btn"
+            :class="{ active: tab === item.name }"
+            @click="tab = item.name"
+          >
+            <span class="icon" v-html="ICONS[item.icon]" aria-hidden="true"></span>
+            <span>{{ item.label }}</span>
+          </button>
+        </nav>
+
+        <!-- 主视图区 -->
+        <main class="main-view">
+          <!-- 1. 运行概览页 -->
+          <div v-show="tab === 'overview'">
+            <!-- 指标统计条 -->
+            <div class="stats-grid" style="margin-bottom: 16px;">
+              <div class="stat-box">
+                <div class="stat-label">登录凭证</div>
+                <div class="stat-value" :style="{ color: status.state_file_exists ? '#16a34a' : '#dc2626' }">
+                  {{ status.state_file_exists ? '已就绪' : '未登录' }}
+                </div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">守护状态</div>
+                <div class="stat-value" :style="{ color: status.running ? '#d97706' : '#0f172a' }">
+                  {{ status.running ? '执行中' : (config.auto_run_enabled ? '定时就绪' : '已暂停') }}
+                </div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">已勾选好友</div>
+                <div class="stat-value">
+                  {{ selectedFriendCount }} <span style="font-size: 12px; color: var(--text-muted); font-weight: 400;">/ {{ totalContactCount }} 人</span>
+                </div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">火花好友</div>
+                <div class="stat-value" style="color: #ea580c;">
+                  {{ sparkFriendCount }} <span style="font-size: 12px; color: var(--text-muted); font-weight: 400;">人</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 快捷执行面板 -->
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">🔥 立即触发续火花</h3>
+                  <p class="card-desc">手动启动一次自动化流程，或在下方查看最近执行记录与结果。</p>
+                </div>
+                <div class="mobile-action-grid" style="display: flex; gap: 8px;">
+                  <el-button class="btn-action-fire" :disabled="status.running" @click="runStreak(false)">
+                    <span class="icon-svg" style="margin-right: 4px;" v-html="ICONS.fire"></span>
+                    {{ status.running ? '任务执行中...' : '立即续火花' }}
+                  </el-button>
+                  <el-button :disabled="status.running" @click="runStreak(true)">
+                    模拟演练 (Dry-Run)
+                  </el-button>
+                </div>
+              </div>
+
+              <!-- 最近执行概况 -->
+              <div class="mobile-stack-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 13.5px;">
+                <div style="background: var(--bg-surface-subtle); padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                  <div style="color: var(--text-muted); margin-bottom: 3px; font-size: 12px;">最近一次执行时间</div>
+                  <div style="font-weight: 600; color: var(--text-main); font-size: 13px;">{{ lastRunInfo.time || '暂无运行记录' }}</div>
+                </div>
+                <div style="background: var(--bg-surface-subtle); padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                  <div style="color: var(--text-muted); margin-bottom: 3px; font-size: 12px;">执行结果简报</div>
+                  <div style="font-weight: 600; font-size: 13px;" :style="{ color: lastRunInfo.success ? '#16a34a' : '#d97706' }">
+                    {{ lastRunInfo.summary || '就绪待命' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. 好友与台账页 -->
+          <div v-show="tab === 'friends'">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">👥 好友与消息台账</h3>
+                  <p class="card-desc">自动同步抖音好友列表，一键勾选火花好友，保存后每日定时自动发送。</p>
+                </div>
+                <div class="mobile-action-grid" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <el-button type="primary" size="small" class="btn-action-primary" :loading="syncing" @click="syncContacts">
+                    同步联系人
+                  </el-button>
+                  <el-button size="small" @click="autoSelectSparkFriends">
+                    一键勾选火花
+                  </el-button>
+                  <el-button size="small" @click="clearSelectedFriends">
+                    清空勾选
+                  </el-button>
+                  <el-button type="success" size="small" :loading="savingLedger" @click="saveLedgerSelection">
+                    保存勾选配置
+                  </el-button>
+                </div>
+              </div>
+
+              <!-- 搜索过滤条 -->
+              <div style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                <el-input
+                  v-model="searchKeyword"
+                  placeholder="搜索好友昵称或火花天数..."
+                  clearable
+                  size="small"
+                  style="flex: 1; min-width: 200px;"
+                />
+                <div style="font-size: 12.5px; color: var(--text-muted); white-space: nowrap;">
+                  已勾选 <strong style="color: var(--text-main);">{{ selectedFriendCount }}</strong> 位好友
+                </div>
+              </div>
+
+              <!-- 桌面端表格 (屏幕宽度 >= 769px) -->
+              <div class="table-box desktop-only-table">
+                <el-table :data="filteredContacts" style="width: 100%;" max-height="520">
+                  <el-table-column width="55" align="center">
+                    <template #default="{ row }">
+                      <el-checkbox v-model="row.selected" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="nickname" label="好友昵称" min-width="180">
+                    <template #default="{ row }">
+                      <span style="font-weight: 500; color: var(--text-main);">{{ row.nickname }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="spark_days" label="火花天数" width="130" sortable>
+                    <template #default="{ row }">
+                      <span v-if="row.spark_days && row.spark_days > 0" style="color: #ea580c; font-weight: 600;">
+                        🔥 {{ row.spark_days }} 天
+                      </span>
+                      <span v-else style="color: var(--text-light); font-size: 12px;">未点亮</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="last_status" label="最近状态" width="130">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.last_status === 'success'" type="success" size="small">成功</el-tag>
+                      <el-tag v-else-if="row.last_status === 'failed'" type="danger" size="small">失败</el-tag>
+                      <el-tag v-else type="info" size="small">待发送</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="last_sent_at" label="最后发送时间" width="170">
+                    <template #default="{ row }">
+                      <span style="font-size: 12px; color: var(--text-muted);">{{ formatTime(row.last_sent_at) }}</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+
+              <!-- 手机端专属卡片列表 (屏幕宽度 <= 768px) -->
+              <div class="mobile-only-cards">
+                <div
+                  v-for="item in filteredContacts"
+                  :key="item.display_name"
+                  class="contact-card-row"
+                  :class="{ 'is-selected': item.selected }"
+                  @click="item.selected = !item.selected"
+                >
+                  <div class="chk-wrap" @click.stop>
+                    <el-checkbox v-model="item.selected" />
+                  </div>
+                  <div class="avatar-badge">{{ (item.nickname || '?').charAt(0) }}</div>
+                  <div class="user-meta">
+                    <div class="user-name">{{ item.nickname }}</div>
+                    <div class="user-sub">{{ formatTime(item.last_sent_at) }}</div>
+                  </div>
+                  <div class="pill-group">
+                    <span v-if="item.spark_days > 0" class="spark-pill">
+                      🔥 {{ item.spark_days }}天
+                    </span>
+                    <span v-else class="no-spark-pill">未点亮</span>
+                    <span class="status-pill-sub" :class="item.last_status || 'pending'">
+                      {{ item.last_status === 'success' ? '成功' : (item.last_status === 'failed' ? '失败' : '待发') }}
+                    </span>
+                  </div>
+                </div>
+                <div v-if="filteredContacts.length === 0" style="text-align: center; padding: 30px 10px; color: var(--text-muted); font-size: 13px;">
+                  暂无好友数据，请点击上方「同步联系人」拉取列表
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. 定时与风控设置页 -->
+          <div v-show="tab === 'settings'">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">⏰ 定时与拟人化风控配置</h3>
+                  <p class="card-desc">配置每日自动执行时间、随机抖动延迟与安全发送间隔，保护主号安全。</p>
+                </div>
+                <el-button type="primary" size="small" class="btn-action-primary mobile-full-btn" :loading="savingConfig" @click="saveConfigForm">
+                  保存设置
+                </el-button>
+              </div>
+
+              <el-form label-position="top" style="max-width: 600px;">
+                <el-form-item label="每日自动发送时间 (24小时制)">
+                  <el-input v-model="config.schedule_time" placeholder="例如 21:00" style="max-width: 200px;" />
+                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">建议设置在晚间 20:00 ~ 22:30 之间。</div>
+                </el-form-item>
+
+                <el-form-item label="随机时间抖动 (分钟)">
+                  <el-input-number v-model="config.jitter_minutes" :min="0" :max="60" />
+                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">在设定时间的 0 ~ N 分钟内随机启动，模拟真人不规律上线。</div>
+                </el-form-item>
+
+                <div class="mobile-stack-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                  <el-form-item label="好友发送最小间隔 (秒)">
+                    <el-input-number v-model="config.send_gap_min" :min="3" :max="30" />
+                  </el-form-item>
+                  <el-form-item label="好友发送最大间隔 (秒)">
+                    <el-input-number v-model="config.send_gap_max" :min="6" :max="60" />
+                  </el-form-item>
+                </div>
+
+                <el-form-item label="自定义发送文案列表">
+                  <el-input
+                    v-model="messagesText"
+                    type="textarea"
+                    :rows="4"
+                    placeholder="每行一条文案，例如：&#10;🔥 续火花&#10;晚上好 🔥&#10;今天也要开心哦 🔥"
+                  />
+                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">每行一条文案，每日发送时系统将从列表中随机抽取一条发送并自动防重。</div>
+                </el-form-item>
+
+                <el-form-item label="定时任务开关">
+                  <el-switch v-model="config.auto_run_enabled" active-text="开启每日自动定时执行" />
+                </el-form-item>
+              </el-form>
+            </div>
+          </div>
+
+          <!-- 4. 运行日志终端页 -->
+          <div v-show="tab === 'logs'">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">💻 实时运行日志</h3>
+                  <p class="card-desc">查看后台自动化执行步骤、会话坐标核验与发送状态。</p>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                  <el-button size="small" @click="fetchLogs">刷新日志</el-button>
+                  <el-button size="small" @click="clearLogs">清空显示</el-button>
+                </div>
+              </div>
+
+              <div class="terminal-box">
+                <div class="terminal-header">
+                  <span>douyin-cloud-streak.log</span>
+                  <span>UTF-8</span>
+                </div>
+                <pre class="terminal-body" id="terminal-view">{{ logsContent || '暂无日志输出，点击上方“刷新日志”获取。' }}</pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. 通行证凭证管理页 -->
+          <div v-show="tab === 'credentials'">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">🔑 登录通行证管理</h3>
+                  <p class="card-desc">管理抖音账号登录凭据 (state.json)，支持直接上传通行证文件。</p>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 16px; max-width: 520px;">
+                <div style="padding: 16px; background: var(--bg-surface-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                  <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">
+                    当前凭证状态: 
+                    <span :style="{ color: status.state_file_exists ? '#16a34a' : '#dc2626' }">
+                      {{ status.state_file_exists ? '✓ 已检测到有效登录态' : '✗ 未检测到登录态' }}
+                    </span>
+                  </div>
+                  <div style="font-size: 12.5px; color: var(--text-muted);">
+                    若凭证过期失效，请在电脑端双击 <code>1.本地提取通行证.bat</code> 扫码，或在下方直接上传新生成的 <code>state.json</code>。
+                  </div>
+                </div>
+
+                <div>
+                  <input type="file" ref="fileInput" accept=".json" style="display: none;" @change="handleFileUpload" />
+                  <el-button type="primary" class="btn-action-primary mobile-full-btn" @click="$refs.fileInput.click()">
+                    上传 state.json 通行证文件
+                  </el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- 安全令牌弹窗 -->
+    <el-dialog v-model="tokenDialogVisible" title="管理后台安全令牌 (Token)" width="90%" style="max-width: 420px;">
+      <p style="font-size: 13px; color: var(--text-muted); margin-top: 0;">
+        首次访问或部署在云服务器时，请输入服务器 <code>.env</code> 中配置的 <code>AUTH_TOKEN</code>。
+      </p>
+      <el-input v-model="tokenInput" placeholder="输入访问安全令牌" show-password />
+      <template #footer>
+        <el-button @click="tokenDialogVisible = false">取消</el-button>
+        <el-button type="primary" class="btn-action-primary" @click="saveToken">保存并应用</el-button>
+      </template>
+    </el-dialog>
+  </div>
+
+  <!-- 引入依赖脚本 -->
+  <script src="/static/vendor/vue.global.prod.js"></script>
+  <script src="/static/vendor/element-plus.full.min.js"></script>
+  <script src="/static/vendor/axios.min.js"></script>
+
+  <script>
+    const { createApp, ref, reactive, computed, onMounted, nextTick } = Vue;
+
+    const ICONS = {
+      fire: `<svg class="icon-svg" viewBox="0 0 24 24" fill="currentColor"><path d="M12.003 2c-.12 0-.24.03-.35.08-1.56.75-3.66 2.37-4.52 4.41-.9 2.13-.53 4.2.49 5.86-.48-.68-.86-1.48-1.02-2.35-.07-.37-.47-.59-.83-.46-.35.12-.55.49-.47.85.34 1.63 1.13 3.09 2.24 4.19C6.46 15.65 6 17.27 6 19c0 2.76 2.69 5 6 5s6-2.24 6-5c0-1.89-.54-3.57-1.74-4.88-.23-.25-.49-.48-.76-.69 1.15-1.12 1.95-2.61 2.29-4.28.08-.36-.12-.73-.47-.85-.36-.13-.76.09-.83.46-.16.87-.54 1.67-1.02 2.35 1.02-1.66 1.39-3.73.49-5.86-.86-2.04-2.96-3.66-4.52-4.41-.11-.05-.23-.08-.35-.08zM12 14c1.66 0 3 1.34 3 3 0 1.66-1.34 3-3 3s-3-1.34-3-3c0-1.66 1.34-3 3-3z"/></svg>`,
+      grid: `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>`,
+      users: `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
+      clock: `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`,
+      terminal: `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>`,
+      key: `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-1.5 1.5L14 9m-1.5 1.5l-2.5 2.5a6 6 0 1 1-8.5 8.5 6 6 0 0 1 8.5-8.5l2.5-2.5m1.5-1.5L16 7m1.5-1.5L20 4"></path></svg>`,
+      reload: `<svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`
+    };
+
+    const app = createApp({
+      setup() {
+        const tab = ref('overview');
+        const syncing = ref(false);
+        const savingLedger = ref(false);
+        const savingConfig = ref(false);
+        const tokenDialogVisible = ref(false);
+        const tokenInput = ref('');
+        const searchKeyword = ref('');
+        const logsContent = ref('');
+
+        const navItems = [
+          { name: 'overview', label: '概览', icon: 'grid' },
+          { name: 'friends', label: '好友', icon: 'users' },
+          { name: 'settings', label: '定时', icon: 'clock' },
+          { name: 'logs', label: '日志', icon: 'terminal' },
+          { name: 'credentials', label: '凭证', icon: 'key' },
+        ];
+
+        const status = reactive({
+          state_file_exists: false,
+          running: false,
+        });
+
+        const config = reactive({
+          schedule_time: '21:00',
+          jitter_minutes: 30,
+          send_gap_min: 6,
+          send_gap_max: 12,
+          messages: ['🔥 续火花', '晚上好 🔥', '今天也要开心哦 🔥'],
+          auto_run_enabled: true
+        });
+
+        const messagesText = ref('');
+        const contacts = ref([]);
+        const lastRunInfo = reactive({
+          time: '',
+          summary: '',
+          success: true
+        });
+
+        const getToken = () => localStorage.getItem('dcs_auth_token') || 'spark_secret_token_change_me';
+        const setToken = (t) => localStorage.setItem('dcs_auth_token', t);
+
+        const api = axios.create();
+        api.interceptors.request.use((req) => {
+          req.headers['x-auth-token'] = getToken();
+          return req;
+        });
+        api.interceptors.response.use(
+          (res) => res,
+          (err) => {
+            if (err.response && err.response.status === 401) {
+              ElementPlus.ElMessage.error('访问令牌错误，请点击右上角钥匙图标输入正确 Token！');
+              tokenDialogVisible.value = true;
+            }
+            return Promise.reject(err);
+          }
+        );
+
+        const totalContactCount = computed(() => contacts.value.length);
+        const selectedFriendCount = computed(() => contacts.value.filter(c => c.selected).length);
+        const sparkFriendCount = computed(() => contacts.value.filter(c => (c.spark_days || 0) > 0).length);
+
+        const filteredContacts = computed(() => {
+          const kw = searchKeyword.value.trim().toLowerCase();
+          if (!kw) return contacts.value;
+          return contacts.value.filter(c => 
+            (c.nickname && c.nickname.toLowerCase().includes(kw)) ||
+            (String(c.spark_days || '').includes(kw))
+          );
+        });
+
+        const formatTime = (timeStr) => {
+          if (!timeStr) return '今日待发送';
+          try {
+            const d = new Date(timeStr);
+            if (isNaN(d.getTime())) return String(timeStr);
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const h = String(d.getHours()).padStart(2, '0');
+            const min = String(d.getMinutes()).padStart(2, '0');
+            return `上次：${m}-${day} ${h}:${min}`;
+          } catch (e) {
+            return '今日待发送';
+          }
+        };
+
+        const loadStatus = async () => {
+          try {
+            const res = await api.get('/api/status');
+            status.running = res.data.running;
+            status.state_file_exists = res.data.state_file_exists;
+          } catch (e) {
+            console.error('Failed to load status', e);
+          }
+        };
+
+        const loadConfig = async () => {
+          try {
+            const res = await api.get('/api/config');
+            Object.assign(config, res.data);
+            messagesText.value = (res.data.messages || []).join('\n');
+          } catch (e) {
+            console.error('Failed to load config', e);
+          }
+        };
+
+        const loadLedger = async () => {
+          try {
+            const res = await api.get('/api/ledger');
+            const list = res.data.contacts || res.data.entries || [];
+            contacts.value = list.map(item => ({
+              display_name: item.display_name || item.nickname || '',
+              nickname: item.nickname || item.display_name || '',
+              spark_days: Number(item.spark_days || item.streak_days || 0),
+              streak_days: Number(item.streak_days || item.spark_days || 0),
+              selected: Boolean(item.selected),
+              last_status: item.last_status || (item.last_sent_at ? 'success' : 'pending'),
+              last_sent_at: item.last_sent_at || ''
+            }));
+            if (res.data.last_run) {
+              lastRunInfo.time = res.data.last_run.time || '';
+              lastRunInfo.summary = res.data.last_run.summary || '';
+              lastRunInfo.success = res.data.last_run.success !== false;
+            }
+          } catch (e) {
+            console.error('Failed to load ledger', e);
+          }
+        };
+
+        const fetchLogs = async () => {
+          try {
+            const res = await api.get('/api/logs');
+            logsContent.value = res.data.logs || '';
+            nextTick(() => {
+              const el = document.getElementById('terminal-view');
+              if (el) el.scrollTop = el.scrollHeight;
+            });
+          } catch (e) {
+            console.error('Failed to fetch logs', e);
+          }
+        };
+
+        const clearLogs = () => {
+          logsContent.value = '';
+        };
+
+        const loadAll = async () => {
+          await Promise.all([loadStatus(), loadConfig(), loadLedger(), fetchLogs()]);
+        };
+
+        const runStreak = async (dryRun = false) => {
+          if (selectedFriendCount.value === 0) {
+            ElementPlus.ElMessage.warning('⚠️ 您尚未勾选任何好友！请在「好友与消息」中勾选好友后再执行。');
+            tab.value = 'friends';
+            return;
+          }
+          try {
+            ElementPlus.ElMessage.info(dryRun ? '正在以模拟演练模式启动...' : '正在启动续火花流程...');
+            const res = await api.post('/api/run', { dry_run: dryRun });
+            if (res.data.ok) {
+              ElementPlus.ElMessage.success('任务已成功触发并在后台运行！');
+              tab.value = 'logs';
+              loadAll();
+            } else {
+              ElementPlus.ElMessage.error(res.data.message || '启动失败');
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('触发失败: ' + (e.response?.data?.detail || e.message));
+          }
+        };
+
+        const resetRunningState = async () => {
+          try {
+            const res = await api.post('/api/reset-running');
+            if (res.data.ok) {
+              ElementPlus.ElMessage.success('运行状态已强制重置！');
+              await loadAll();
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('重置失败: ' + (e.response?.data?.detail || e.message));
+          }
+        };
+
+        const syncContacts = async () => {
+          syncing.value = true;
+          try {
+            ElementPlus.ElMessage.info('🚀 正在启动后台同步联系人列表（预计 10~20 秒）...');
+            await api.post('/api/sync');
+            
+            let checks = 0;
+            const timer = setInterval(async () => {
+              checks++;
+              try {
+                const resLedger = await api.get('/api/ledger');
+                const isFetching = resLedger.data.fetching;
+                if (!isFetching || checks >= 25) {
+                  clearInterval(timer);
+                  syncing.value = false;
+                  await loadLedger();
+                  const total = contacts.value.length;
+                  const sparks = contacts.value.filter(c => (c.spark_days || 0) > 0).length;
+                  if (total > 0) {
+                    ElementPlus.ElMessage.success(`🎉 同步完成！已获取 ${total} 位好友，其中 ${sparks} 位带有火花！`);
+                  } else {
+                    ElementPlus.ElMessage.warning('未能读取到联系人，请确认已上传登录凭证 state.json。');
+                  }
+                }
+              } catch (err) {
+                clearInterval(timer);
+                syncing.value = false;
+              }
+            }, 1500);
+          } catch (e) {
+            syncing.value = false;
+            ElementPlus.ElMessage.error('同步请求失败: ' + (e.response?.data?.detail || e.message));
+          }
+        };
+
+        const autoSelectSparkFriends = () => {
+          let count = 0;
+          contacts.value.forEach(c => {
+            if ((c.spark_days || 0) > 0) {
+              c.selected = true;
+              count++;
+            }
+          });
+          ElementPlus.ElMessage.success(`已自动勾选 ${count} 位火花好友，请点击“保存勾选配置”！`);
+        };
+
+        const clearSelectedFriends = () => {
+          contacts.value.forEach(c => c.selected = false);
+          ElementPlus.ElMessage.info('已清空全部勾选，请点击“保存勾选配置”生效。');
+        };
+
+        const saveLedgerSelection = async () => {
+          savingLedger.value = true;
+          try {
+            const selectedNames = contacts.value.filter(c => c.selected).map(c => c.display_name || c.nickname);
+            const res = await api.post('/api/ledger/selection', { selected_names: selectedNames });
+            if (res.data.ok) {
+              ElementPlus.ElMessage.success(`好友勾选配置已成功保存！当前生效勾选 ${selectedNames.length} 人`);
+              await loadLedger();
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message));
+          } finally {
+            savingLedger.value = false;
+          }
+        };
+
+        const saveConfigForm = async () => {
+          savingConfig.value = true;
+          try {
+            const msgs = messagesText.value.split('\n').map(s => s.trim()).filter(Boolean);
+            config.messages = msgs.length > 0 ? msgs : ['🔥 续火花'];
+            const res = await api.post('/api/config', config);
+            if (res.data.ok) {
+              ElementPlus.ElMessage.success('定时与风控设置已保存！');
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message));
+          } finally {
+            savingConfig.value = false;
+          }
+        };
+
+        const handleFileUpload = async (event) => {
+          const file = event.target.files[0];
+          if (!file) return;
+          const formData = new FormData();
+          formData.append('file', file);
+          try {
+            ElementPlus.ElMessage.info('正在上传通行证凭据...');
+            const res = await api.post('/api/upload-state', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            if (res.data.ok) {
+              ElementPlus.ElMessage.success('state.json 通行证凭证已成功上传并就绪！');
+              await loadStatus();
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error('上传失败: ' + (e.response?.data?.detail || e.message));
+          }
+        };
+
+        const showTokenDialog = () => {
+          tokenInput.value = getToken();
+          tokenDialogVisible.value = true;
+        };
+
+        const saveToken = () => {
+          if (tokenInput.value.trim()) {
+            setToken(tokenInput.value.trim());
+            ElementPlus.ElMessage.success('安全令牌已更新！');
+            tokenDialogVisible.value = false;
+            loadAll();
+          }
+        };
+
+        onMounted(() => {
+          loadAll();
+          setInterval(loadStatus, 10000);
+        });
+
+        return {
+          tab,
+          navItems,
+          status,
+          config,
+          messagesText,
+          contacts,
+          lastRunInfo,
+          totalContactCount,
+          selectedFriendCount,
+          sparkFriendCount,
+          filteredContacts,
+          searchKeyword,
+          logsContent,
+          syncing,
+          savingLedger,
+          savingConfig,
+          tokenDialogVisible,
+          tokenInput,
+          ICONS,
+          formatTime,
+          loadAll,
+          runStreak,
+          resetRunningState,
+          syncContacts,
+          autoSelectSparkFriends,
+          clearSelectedFriends,
+          saveLedgerSelection,
+          saveConfigForm,
+          fetchLogs,
+          clearLogs,
+          handleFileUpload,
+          showTokenDialog,
+          saveToken
+        };
+      }
+    });
+
+    app.use(ElementPlus);
+    app.mount('#app');
+  </script>
+</body>
+</html>

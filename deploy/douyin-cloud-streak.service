@@ -1,0 +1,15 @@
+[Unit]
+Description=Douyin Cloud Streak Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__DIR__
+ExecStart=__VENV__/bin/python app.py
+Restart=always
+RestartSec=5
+EnvironmentFile=-__DIR__/.env
+
+[Install]
+WantedBy=multi-user.target
