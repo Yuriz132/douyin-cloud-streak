@@ -1,4 +1,4 @@
-# 抖音云端自动续火花 · 零基础纯小白完整教程 (Douyin Cloud Streak)
+# 抖音云端自动续火花 3.0 正式版 · 零基础纯小白完整教程 (Douyin Cloud Streak)
 
 > 🎁 **【福利】新手免费获取云服务器教程（零成本搭建）**：
 > * 🆓 **白嫖 MonkeyCode 理论永久服务器教程**：👉 [DOCX 下载点击查看](https://ncstatic-file.clewm.net/rsrc/2026/0809/10/785d5018effb6e5e4dbbc25f4bdcaef7.docx)
