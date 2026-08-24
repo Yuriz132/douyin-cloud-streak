@@ -1497,7 +1497,7 @@
               try {
                 const resLedger = await api.get('/api/ledger');
                 const isFetching = resLedger.data.fetching;
-                if (!isFetching || checks >= 25) {
+                if (!isFetching || checks >= 240) {
                   clearInterval(timer);
                   syncing.value = false;
                   await loadLedger();
@@ -1505,6 +1505,8 @@
                   const sparks = contacts.value.filter(c => (c.spark_days || 0) > 0).length;
                   if (total > 0) {
                     ElementPlus.ElMessage.success(`🎉 同步完成！已获取 ${total} 位好友，其中 ${sparks} 位带有火花！`);
+                  } else if (checks >= 240) {
+                    ElementPlus.ElMessage.info('同步耗时较长仍在后台进行，稍后刷新页面即可查看结果。');
                   } else {
                     ElementPlus.ElMessage.warning('未能读取到联系人，请确认已上传登录凭证 state.json。');
                   }

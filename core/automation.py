@@ -244,56 +244,59 @@ _EXTRACT_JS = """
     () => {
         const out = [];
         const seen = new Set();
-        
-        // 尝试多种常见的抖音会话标题选择器
-        const selectors = [
-            '.conversationConversationItemtitle',
-            '[class*="conversationConversationItemtitle"]',
-            '[class*="Itemtitle"]',
-            '[class*="Item-title"]',
-            '[class*="item-title"]',
-            '[class*="conversation-item-title"]'
-        ];
-        
-        let titleElements = [];
-        for (const sel of selectors) {
-            const els = document.querySelectorAll(sel);
-            if (els && els.length > 0) {
-                titleElements = Array.from(els);
-                break;
-            }
-        }
-        
-        // 兜底扫描左侧面板中所有会话容器
-        if (titleElements.length === 0) {
-            const items = document.querySelectorAll('[class*="conversation"], [class*="Conversation"], [class*="chat-item"], li');
-            items.forEach(it => {
-                const rect = it.getBoundingClientRect();
-                if (rect.width > 50 && rect.left < 360) {
-                    const titleEl = it.querySelector('[class*="title"], [class*="name"], span');
-                    if (titleEl) titleElements.push(titleEl);
-                }
-            });
-        }
 
-        titleElements.forEach(t => {
-            const name = (t.textContent || '').trim();
-            if (!name || seen.has(name) || name.length > 40) return;
-            if (name === '消息' || name === '私信' || name === '朋友私信' || name === '通知') return;
-            seen.add(name);
-            
-            // 扫描父级附近节点中的火花标记
-            let streak = '';
-            let p = t.parentElement;
-            for (let i = 0; i < 4 && p; i++) {
-                const s = p.querySelector('[class*="Streak"], [class*="streak"], [class*="commonStreak"]');
-                if (s) {
-                    streak = (s.textContent || '').trim();
-                    break;
-                }
-                p = p.parentElement;
+        // 每个会话一行：conversationConversationItemwrapper
+        const rows = document.querySelectorAll('[class*="conversationConversationItemwrapper"]');
+
+        // 名字是标题节点的直接文本；火花/时间等标签可能嵌在其中，需剔除
+        const cleanName = (el) => {
+            let direct = "";
+            el.childNodes.forEach(n => { if (n.nodeType === 3) direct += n.textContent; });
+            let name = direct.trim();
+            if (!name) {
+                const clone = el.cloneNode(true);
+                clone.querySelectorAll(
+                    '[class*="TagNextToTitle"], [class*="timeStr"], [class*="streak"], [class*="Streak"]'
+                ).forEach(x => x.remove());
+                name = (clone.textContent || "").trim();
             }
-            out.push({ name: name, streak: streak });
+            return name.replace(/\\s+/g, " ").trim();
+        };
+
+        rows.forEach(row => {
+            const rect = row.getBoundingClientRect();
+            if (rect.height < 30 || rect.width < 100) return;
+
+            // 精确类名优先；未命中时在标题容器内继续找，最后整行清洗兜底
+            let finalName = "";
+            let titleEl = row.querySelector('.conversationConversationItemtitle');
+            const wrap = titleEl ? null : row.querySelector('[class*="Itemtitle"]');
+            if (!titleEl && wrap) titleEl = wrap.querySelector('.conversationConversationItemtitle');
+
+            if (titleEl) {
+                finalName = cleanName(titleEl);
+            } else if (wrap) {
+                const c2 = wrap.cloneNode(true);
+                c2.querySelectorAll(
+                    '[class*="TagNextToTitle"], [class*="timeStr"], [class*="streak"], [class*="Streak"], [class*="badge"]'
+                ).forEach(x => x.remove());
+                finalName = (c2.textContent || "").replace(/\\s+/g, " ").trim();
+            }
+
+            if (!finalName) return;
+            if (/^\\d+$/.test(finalName)) return;          // 纯数字：未读数/火花天数误当昵称
+            if (/^\\d{1,2}:\\d{2}$/.test(finalName)) return; // 时间
+            if (finalName === '消息' || finalName === '私信' || finalName === '朋友私信' || finalName === '通知') return;
+            if (finalName.length > 40) return;
+            if (seen.has(finalName)) return;
+            seen.add(finalName);
+
+            // 火花天数：行内 commonStreak 容器（normalText 为数字）
+            let streak = "";
+            const st = row.querySelector('[class*="commonStreaknormalText"], [class*="commonStreakstreakContainer"]');
+            if (st) streak = (st.textContent || "").trim();
+
+            out.push({ name: finalName, streak: streak });
         });
         return out;
     }
@@ -312,8 +315,11 @@ def _open_chat_page(page) -> bool:
     return False
 
 
-def _scroll_and_extract(page, collected: list[dict], max_rounds: int = 20) -> None:
-    """滚动聊天列表并提取联系人，直到没有新数据。"""
+def _scroll_and_extract(page, collected: list[dict], max_rounds: int = 28) -> None:
+    """滚动聊天列表并提取联系人，直到没有新数据。
+
+    列表为虚拟滚动，步长过大会跳过部分行导致火花遗漏，故小步慢滚。
+    """
     for _ in range(max_rounds):
         data = page.evaluate(_EXTRACT_JS) or []
         new_items = [x for x in data if x not in collected]
@@ -323,14 +329,14 @@ def _scroll_and_extract(page, collected: list[dict], max_rounds: int = 20) -> No
         else:
             stable = getattr(_scroll_and_extract, "_stable", 0) + 1
             _scroll_and_extract._stable = stable
-            if stable >= 2:
+            if stable >= 3:
                 break
         try:
             page.mouse.move(200, 350)
-            page.mouse.wheel(0, 800)
+            page.mouse.wheel(0, 450)
         except Exception:
             pass
-        page.wait_for_timeout(1200)
+        page.wait_for_timeout(1000)
 
 
 def fetch_chat_contacts(account_id: str | None = None) -> dict:
