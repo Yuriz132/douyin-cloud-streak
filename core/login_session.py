@@ -36,7 +36,39 @@ SESSION_TIMEOUT = 300
 # 二维码自动刷新次数上限（抖音二维码约 2~3 分钟过期一次）
 QR_REFRESH_LIMIT = 5
 
-_LOGIN_COOKIE_NAMES = {"sessionid", "sessionid_ss"}
+# 登录成功判定 Cookie：覆盖抖音各端变体（sid_guard/sid_tt/uid_tt 与 sessionid 同批下发）
+_LOGIN_COOKIE_NAMES = {"sessionid", "sessionid_ss", "sid_tt", "sid_guard", "uid_tt"}
+
+_slot_guard = threading.Lock()
+_slot_holders: set[str] = set()
+
+
+def _acquire_slot_tracked(aid: str) -> None:
+    """获取全局并发名额并登记归属，保证释放幂等（线程卡死被强制接管时不重复释放）。"""
+    acquire_browser_slot()
+    with _slot_guard:
+        _slot_holders.add(aid)
+
+
+def _release_slot_once(aid: str) -> None:
+    with _slot_guard:
+        if aid not in _slot_holders:
+            return
+        _slot_holders.discard(aid)
+    release_browser_slot()
+
+
+def _hard_expire(aid: str) -> None:
+    """硬超时保护：工作线程卡死（如浏览器进程被杀后同步调用挂起）时强制终态。"""
+    flag = _stop_flags.get(aid)
+    if flag:
+        flag.set()
+    with _guard:
+        st = _sessions.get(aid)
+        if st and st["status"] in ("queuing", "starting", "waiting_scan"):
+            st.update(status="expired", message="扫码会话超时，请重新发起扫码", qrcode="")
+            logger.warning("[%s] 扫码会话触发硬超时保护（工作线程疑似卡死）", aid)
+    _release_slot_once(aid)
 
 _QR_SELECTORS = [
     "#animate_qrcode_container img",
@@ -81,6 +113,9 @@ def start(account_id: str) -> dict:
 
     t = threading.Thread(target=_session_worker, args=(account_id, flag), daemon=True)
     t.start()
+    watchdog = threading.Timer(SESSION_TIMEOUT + 90, lambda: _hard_expire(account_id))
+    watchdog.daemon = True
+    watchdog.start()
     logger.info("[%s] 网页扫码会话已启动", account_id)
     return {"ok": True, "resumed": False, **_public(st)}
 
@@ -149,10 +184,8 @@ def _is_stopped(aid: str) -> bool:
 def _session_worker(aid: str, stop_flag: threading.Event) -> None:
     pw = None
     browser = None
-    ok_slot = False
     try:
-        acquire_browser_slot()
-        ok_slot = True
+        _acquire_slot_tracked(aid)
         if _is_stopped(aid):
             raise CancelledError()
 
@@ -165,11 +198,13 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
             "--disable-gpu",
             "--disable-blink-features=AutomationControlled",
         ])
+        # UA 版本号与真实内核保持一致，固定旧版本号容易被风控识别为伪造环境
+        chrome_major = (browser.version or "").split(".")[0] or "124"
         context = browser.new_context(
             viewport={"width": 1366, "height": 900},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                f"(KHTML, like Gecko) Chrome/{chrome_major}.0.0.0 Safari/537.36"
             ),
             locale="zh-CN",
             timezone_id="Asia/Shanghai",
@@ -192,6 +227,7 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
 
         deadline = time.time() + SESSION_TIMEOUT
         refresh_count = 0
+        polls = 0
         while time.time() < deadline:
             if _is_stopped(aid):
                 raise CancelledError()
@@ -203,6 +239,11 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
                      message=f"登录成功！已保存该账号的登录态（{len(cookies)} 条 Cookie）")
                 logger.info("[%s] 网页扫码登录成功，state.json 已更新", aid)
                 return
+
+            polls += 1
+            if polls % 10 == 0:
+                names = ",".join(sorted({c.get("name", "") for c in cookies if c.get("name")}))
+                logger.info("[%s] 等待扫码确认中，当前 Cookie：%s", aid, names or "无")
 
             if _qr_expired(page):
                 refresh_count += 1
@@ -238,8 +279,7 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
                 pw.stop()
             except Exception:
                 pass
-        if ok_slot:
-            release_browser_slot()
+        _release_slot_once(aid)
         _stop_flags.pop(aid, None)
         # 终态保留 120 秒供前端读取，之后由 GC 或下次 start 清理
         threading.Timer(120, lambda: _sessions.pop(aid, None)).start()
