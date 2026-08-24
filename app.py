@@ -32,7 +32,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from core import accounts, automation, ledger, scheduler
+from core import accounts, automation, ledger, login_session, scheduler
 from core.config import (
     DATA_DIR,
     DEFAULT_ACCOUNT_ID,
@@ -439,6 +439,7 @@ def api_account_delete(account_id: str, token: str = Header(default="", alias="X
         raise HTTPException(status_code=400, detail="默认账号不允许删除")
     if _lock_for(aid).locked() or aid in harvesting:
         raise HTTPException(status_code=409, detail="该账号正在执行任务，请稍后再试")
+    login_session.cancel(aid)
     ok = accounts.remove_account(aid)
     if not ok:
         raise HTTPException(status_code=404, detail=f"账号不存在：{aid}")
@@ -682,6 +683,42 @@ def api_reset_running(
             pass
     logger.info("[%s] 已强制重置后台运行状态", aid)
     return {"ok": True, "message": "运行状态已强制重置"}
+
+
+@app.post("/api/login/start")
+def api_login_start(
+    token: str = Header(default="", alias="X-Auth-Token"),
+    account_id: str | None = None,
+) -> dict:
+    """网页端扫码登录：为当前账号启动无头浏览器并生成登录二维码。"""
+    _check_auth(token)
+    aid = _resolve_account(account_id)
+    if _lock_for(aid).locked():
+        raise HTTPException(status_code=409, detail="该账号正在执行任务，请稍后再试")
+    res = login_session.start(aid)
+    logger.info("[%s] 已发起网页扫码登录", aid)
+    return res
+
+
+@app.get("/api/login/status")
+def api_login_status(
+    token: str = Header(default="", alias="X-Auth-Token"),
+    account_id: str | None = None,
+) -> dict:
+    """轮询扫码会话状态与二维码（status: idle/queuing/starting/waiting_scan/success/failed/expired/cancelled）。"""
+    _check_auth(token)
+    aid = _resolve_account(account_id)
+    return login_session.status(aid)
+
+
+@app.post("/api/login/cancel")
+def api_login_cancel(
+    token: str = Header(default="", alias="X-Auth-Token"),
+    account_id: str | None = None,
+) -> dict:
+    _check_auth(token)
+    aid = _resolve_account(account_id)
+    return login_session.cancel(aid)
 
 
 @app.post("/api/upload-state")

@@ -1061,14 +1061,17 @@
                     </span>
                   </div>
                   <div style="font-size: 12.5px; color: var(--text-muted);">
-                    若凭证过期失效，请在电脑端双击 <code>1.本地提取通行证.bat</code> 扫码，或在下方直接上传新生成的 <code>state.json</code>。上传会写入当前账号目录。
+                    推荐直接点击下方「手机扫码登录」，服务器会自动生成二维码，手机扫码后凭证自动保存，全程无需电脑。也可以在电脑端双击 <code>1.本地提取通行证.bat</code> 后上传 <code>state.json</code>；凭证过期时同样在网页端重新扫码即可。
                   </div>
                 </div>
 
-                <div>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                  <el-button type="primary" class="btn-action-primary mobile-full-btn" @click="openQrLogin">
+                    手机扫码登录 / 重新验证
+                  </el-button>
                   <input type="file" ref="fileInput" accept=".json" style="display: none;" @change="handleFileUpload" />
-                  <el-button type="primary" class="btn-action-primary mobile-full-btn" @click="$refs.fileInput.click()">
-                    上传 state.json 通行证文件
+                  <el-button class="mobile-full-btn" @click="$refs.fileInput.click()">
+                    上传 state.json 文件
                   </el-button>
                 </div>
               </div>
@@ -1095,6 +1098,41 @@
         <div style="display: flex; gap: 8px; justify-content: flex-end;">
           <el-button @click="accountDialogVisible = false">取消</el-button>
           <el-button type="primary" class="btn-action-primary" @click="createAccount">创建账号</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- 网页扫码登录弹窗 -->
+    <el-dialog
+      v-model="qrDialogVisible"
+      title="📱 手机扫码登录"
+      width="90%"
+      style="max-width: 400px; text-align: center;"
+      :close-on-click-modal="false"
+      @close="cancelLoginPolling"
+    >
+      <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.6;">
+        为账号 <strong>{{ currentAccount.name }}</strong> 登录抖音。请打开手机抖音 App → 扫一扫，扫描下方二维码并确认登录。
+      </div>
+
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+        <div v-if="loginState.qrcode" style="padding: 10px; background: #fff; border: 1px solid var(--border-color); border-radius: var(--radius-sm); line-height: 0;">
+          <img :src="loginState.qrcode" alt="登录二维码" style="width: 220px; height: 220px; object-fit: contain;" />
+        </div>
+        <div v-else-if="isLoginBusy" v-loading="true" style="width: 240px; height: 240px; display: flex; align-items: center; justify-content: center; background: var(--bg-surface-subtle); border-radius: var(--radius-sm);">
+        </div>
+
+        <div style="font-size: 13.5px; font-weight: 600;">
+          {{ loginState.message || '等待中…' }}
+          <span v-if="loginState.status === 'waiting_scan'" style="color: #16a34a;">（等待扫码确认）</span>
+        </div>
+        <div v-if="loginState.error" style="font-size: 12px; color: #dc2626; word-break: break-all;">{{ loginState.error }}</div>
+      </div>
+
+      <template #footer>
+        <div style="display: flex; gap: 8px; justify-content: center;">
+          <el-button v-if="!isLoginBusy" type="primary" class="btn-action-primary" @click="startQrLogin">重新获取二维码</el-button>
+          <el-button @click="qrDialogVisible = false">{{ isLoginBusy ? '取消' : '关闭' }}</el-button>
         </div>
       </template>
     </el-dialog>
@@ -1549,6 +1587,65 @@
           }
         };
 
+        // ── 网页扫码登录 ──
+        const LOGIN_BUSY_STATES = ['queuing', 'starting', 'waiting_scan'];
+        const qrDialogVisible = ref(false);
+        const loginState = ref({ status: 'idle', message: '', qrcode: '', error: '' });
+        let loginPollTimer = null;
+
+        const isLoginBusy = computed(() => LOGIN_BUSY_STATES.includes(loginState.value.status));
+
+        const stopLoginPolling = () => {
+          if (loginPollTimer) { clearInterval(loginPollTimer); loginPollTimer = null; }
+        };
+
+        const pollLoginStatus = async () => {
+          try {
+            const res = await api.get('/api/login/status');
+            loginState.value = res.data;
+            if (!LOGIN_BUSY_STATES.includes(res.data.status)) {
+              stopLoginPolling();
+              if (res.data.status === 'success') {
+                ElementPlus.ElMessage.success('登录成功！当前账号登录态已更新。');
+                setTimeout(() => { qrDialogVisible.value = false; }, 1200);
+                await Promise.all([loadStatus(), loadAccounts()]);
+              } else if (res.data.status === 'failed' || res.data.status === 'expired') {
+                ElementPlus.ElMessage.warning(loginState.value.message || '扫码未完成，请重试');
+              }
+            }
+          } catch (e) { /* 轮询失败静默，下个周期重试 */ }
+        };
+
+        const startLoginPolling = () => {
+          stopLoginPolling();
+          pollLoginStatus();
+          loginPollTimer = setInterval(pollLoginStatus, 1500);
+        };
+
+        const startQrLogin = async () => {
+          loginState.value = { status: 'queuing', message: '正在排队获取浏览器名额…', qrcode: '', error: '' };
+          try {
+            await api.post('/api/login/start');
+            startLoginPolling();
+          } catch (e) {
+            loginState.value = { status: 'failed', message: '发起扫码失败', qrcode: '', error: e.response?.data?.detail || e.message };
+          }
+        };
+
+        const openQrLogin = () => {
+          qrDialogVisible.value = true;
+          startQrLogin();
+        };
+
+        const cancelLoginPolling = async () => {
+          stopLoginPolling();
+          if (isLoginBusy.value) {
+            try { await api.post('/api/login/cancel'); } catch (e) { /* ignore */ }
+            loginState.value = { status: 'cancelled', message: '已取消', qrcode: '', error: '' };
+          }
+        };
+
+
         const showTokenDialog = () => {
           tokenInput.value = getToken();
           tokenDialogVisible.value = true;
@@ -1625,6 +1722,12 @@
           fetchLogs,
           clearLogs,
           handleFileUpload,
+          qrDialogVisible,
+          loginState,
+          isLoginBusy,
+          openQrLogin,
+          startQrLogin,
+          cancelLoginPolling,
           showTokenDialog,
           saveToken
         };
