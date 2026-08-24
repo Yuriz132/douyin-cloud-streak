@@ -784,11 +784,16 @@
           <div v-show="tab === 'overview'">
             <!-- 指标统计条 -->
             <div class="stats-grid" style="margin-bottom: 16px;">
-              <div class="stat-box">
-                <div class="stat-label">登录凭证</div>
-                <div class="stat-value" :style="{ color: status.state_file_exists ? '#16a34a' : '#dc2626' }">
-                  {{ status.state_file_exists ? '已就绪' : '未登录' }}
+              <div class="stat-box" style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <div>
+                  <div class="stat-label">登录凭证</div>
+                  <div class="stat-value" :style="{ color: status.state_file_exists ? '#16a34a' : '#dc2626' }">
+                    {{ status.state_file_exists ? '已就绪' : '未登录' }}
+                  </div>
                 </div>
+                <el-button v-if="!status.state_file_exists" type="danger" size="small" @click="goToCredentials">
+                  立即登录
+                </el-button>
               </div>
               <div class="stat-box">
                 <div class="stat-label">守护状态</div>
@@ -1269,9 +1274,11 @@
         const sparkFriendCount = computed(() => contacts.value.filter(c => (c.spark_days || 0) > 0).length);
 
         const filteredContacts = computed(() => {
+          // 带火花的好友按天数从高到低排在最前
+          const sorted = [...contacts.value].sort((a, b) => (b.spark_days || 0) - (a.spark_days || 0));
           const kw = searchKeyword.value.trim().toLowerCase();
-          if (!kw) return contacts.value;
-          return contacts.value.filter(c => 
+          if (!kw) return sorted;
+          return sorted.filter(c =>
             (c.nickname && c.nickname.toLowerCase().includes(kw)) ||
             (String(c.spark_days || '').includes(kw))
           );
@@ -1634,9 +1641,29 @@
           }
         };
 
+        const goToCredentials = () => {
+          tab.value = 'credentials';
+        };
+
         const openQrLogin = () => {
-          qrDialogVisible.value = true;
-          startQrLogin();
+          ElementPlus.ElMessageBox.confirm(
+            '<div style="text-align: left; line-height: 2; font-size: 13px;">'
+            + '1. 请先拿出手机，打开抖音 App 并登录，做好扫码准备<br/>'
+            + '2. 点击「开始扫码」后，二维码生成约需 20~40 秒，请耐心等待<br/>'
+            + '3. 二维码出现后请<b>立即扫码</b>，它会不定时自动刷新，请时刻关注其变化<br/>'
+            + '4. 若提示安全验证，页面会弹出<b>新的二维码</b>，请继续用手机扫码完成验证'
+            + '</div>',
+            '手机扫码登录须知',
+            {
+              dangerouslyUseHTMLString: true,
+              confirmButtonText: '已备好手机，开始扫码',
+              cancelButtonText: '再等等',
+              type: 'warning',
+            }
+          ).then(() => {
+            qrDialogVisible.value = true;
+            startQrLogin();
+          }).catch(() => {});
         };
 
         const cancelLoginPolling = async () => {
@@ -1680,6 +1707,7 @@
 
         return {
           tab,
+          goToCredentials,
           navItems,
           status,
           currentAccountId,
