@@ -211,7 +211,7 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
                 logger.info("[%s] 登录二维码已过期，第 %s 次自动刷新", aid, refresh_count)
                 _click_qr_refresh(page)
                 page.wait_for_timeout(2500)
-                qr_data = _wait_and_extract_qrcode(page, timeout_ms=15000)
+                qr_data = _wait_and_extract_qrcode(page, timeout_ms=30000)
                 if qr_data:
                     _set(aid, qrcode=qr_data,
                          message=f"二维码已自动刷新（第 {refresh_count} 次），请重新扫码")
@@ -249,8 +249,11 @@ class CancelledError(Exception):
     pass
 
 
-def _wait_and_extract_qrcode(page, timeout_ms: int = 20000) -> str | None:
-    """等待二维码出现并提取为 data URL；失败时整页截图兜底。"""
+def _wait_and_extract_qrcode(page, timeout_ms: int = 45000) -> str | None:
+    """等待二维码出现并提取为 data URL；失败时整页截图兜底。
+
+    容器冷启动首次加载可能超过 20s，窗口过短会把慢加载误判为失败。
+    """
     deadline = time.time() + timeout_ms / 1000
     src = ""
     while time.time() < deadline:
@@ -299,12 +302,17 @@ def _wait_and_extract_qrcode(page, timeout_ms: int = 20000) -> str | None:
             pass
     if src:
         return f"data:image/png;base64,{src}"
-    # 兜底：整页截图（用户至少能看到登录框与二维码）
-    try:
-        shot = page.screenshot(timeout=5000)
-        return "data:image/png;base64," + base64.b64encode(shot).decode()
-    except Exception:
-        return None
+    # 兜底：整页截图（用户至少能看到登录框与二维码）；渲染进程繁忙时可能瞬时失败，重试一次
+    for _attempt in range(2):
+        try:
+            shot = page.screenshot(timeout=8000)
+            return "data:image/png;base64," + base64.b64encode(shot).decode()
+        except Exception:
+            try:
+                page.wait_for_timeout(1500)
+            except Exception:
+                break
+    return None
 
 
 def _qr_expired(page) -> bool:

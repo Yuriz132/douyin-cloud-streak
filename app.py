@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import sys
 import threading
 from contextlib import asynccontextmanager
@@ -260,24 +261,55 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _proc_identity(pid: int | None = None) -> tuple[str, str]:
+    """返回 (主机标识, 进程启动时间)，用于识别 PID 复用与跨容器残留锁。
+
+    容器每次重启 PID 命名空间都会重置，仅凭 PID 数字无法区分
+    「旧容器残留」和「本容器自身」，需借助主机名与 /proc 启动时间。
+    """
+    pid = pid if pid is not None else os.getpid()
+    start = ""
+    if os.name == "posix":
+        try:
+            # stat 第22字段为 starttime(jiffies)；comm 字段可能含空格，先按右括号切
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            start = fields[19]
+        except (OSError, IndexError):
+            start = ""
+    return socket.gethostname(), start
+
+
 def _acquire_instance_lock() -> None:
     """单实例自检：若已有活跃实例运行则拒绝启动，防旧实例 scheduler 残留再发消息。"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    cur_host, cur_start = _proc_identity()
     if PID_PATH.exists():
+        old_pid: int | None = None
+        old_host, old_start = "", ""
         try:
-            old_pid = int(PID_PATH.read_text().strip())
-        except (ValueError, OSError):
-            old_pid = None
-        if old_pid and _pid_alive(old_pid):
-            logger.error(
-                "检测到已有 sparkkeeper 实例在运行（PID %s），拒绝启动。"
-                "请先停止旧实例再重试，避免多实例重复发送。",
-                old_pid,
-            )
-            raise SystemExit(f"已有实例在运行（PID {old_pid}），请先停止旧实例")
-        else:
-            logger.info("发现旧 PID 文件但进程已退出（PID %s），可安全接管", old_pid)
-    PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
+            raw = json.loads(PID_PATH.read_text().strip())
+            old_pid = int(raw["pid"])
+            old_host = str(raw.get("host", ""))
+            old_start = str(raw.get("start", ""))
+        except (ValueError, OSError, KeyError, TypeError):
+            old_pid = None  # 旧版纯数字格式无法验证来源，视为残留直接接管
+        if old_pid:
+            if old_host and old_host != cur_host:
+                logger.info("发现其他容器/主机（%s）的残留锁（PID %s），可安全接管", old_host, old_pid)
+            elif _pid_alive(old_pid) and old_start and _proc_identity(old_pid)[1] == old_start:
+                # 同主机且该 PID 的启动时间与锁记录一致 → 确为旧实例本体
+                logger.error(
+                    "检测到已有 sparkkeeper 实例在运行（PID %s），拒绝启动。"
+                    "请先停止旧实例再重试，避免多实例重复发送。",
+                    old_pid,
+                )
+                raise SystemExit(f"已有实例在运行（PID {old_pid}），请先停止旧实例")
+            else:
+                logger.info("旧实例锁已失效（进程退出或 PID 被复用，PID %s），可安全接管", old_pid)
+    PID_PATH.write_text(
+        json.dumps({"pid": os.getpid(), "host": cur_host, "start": cur_start}),
+        encoding="utf-8",
+    )
 
 
 @asynccontextmanager
