@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgbm1 \
     libpango-1.0-0 \
     libcairo2 \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖清单并安装

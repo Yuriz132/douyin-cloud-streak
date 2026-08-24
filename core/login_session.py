@@ -17,6 +17,10 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
+import random
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -181,9 +185,51 @@ def _is_stopped(aid: str) -> bool:
     return bool(flag and flag.is_set())
 
 
+def _launch_browser(pw):
+    """优先在 Xvfb 虚拟屏幕中启动有头 Chromium：真实有头内核的风控识别率远低于无头模式。
+
+    返回 (browser, xvfb_proc)；Xvfb 不可用或启动失败时回退为无头模式。
+    """
+    common = dict(
+        args=[
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-extensions",
+            "--disable-software-rasterizer",
+        ],
+        # 排除自动化开关，与商业版 excludeSwitches 等效
+        ignore_default_args=["--enable-automation"],
+    )
+    if shutil.which("Xvfb"):
+        for _ in range(4):
+            display = f":{random.randint(90, 180)}"
+            try:
+                xproc = subprocess.Popen(
+                    ["Xvfb", display, "-screen", "0", "1366x900x24", "-nolisten", "tcp"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                time.sleep(0.8)
+                if xproc.poll() is not None:
+                    continue  # 显示号被占用等，换一个重试
+                try:
+                    browser = pw.chromium.launch(
+                        headless=False, env={**os.environ, "DISPLAY": display}, **common
+                    )
+                    return browser, xproc
+                except Exception:
+                    xproc.terminate()
+            except Exception:
+                continue
+    return pw.chromium.launch(headless=True, **common), None
+
+
 def _session_worker(aid: str, stop_flag: threading.Event) -> None:
     pw = None
     browser = None
+    xvfb_proc = None
     try:
         _acquire_slot_tracked(aid)
         if _is_stopped(aid):
@@ -191,13 +237,7 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
 
         _set(aid, status="starting", message="正在打开抖音登录页…")
         pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=True, args=[
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-blink-features=AutomationControlled",
-        ])
+        browser, xvfb_proc = _launch_browser(pw)
         # UA 版本号与真实内核保持一致，固定旧版本号容易被风控识别为伪造环境
         chrome_major = (browser.version or "").split(".")[0] or "124"
         context = browser.new_context(
@@ -210,6 +250,14 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
             timezone_id="Asia/Shanghai",
             ignore_https_errors=True,
         )
+        # 与 2.1 商业版 stealth(webgl_vendor="Intel Inc.", renderer="Intel Iris OpenGL Engine") 对齐
+        context.add_init_script(
+            "const _spoof=(proto)=>{const g=proto.getParameter;"
+            "proto.getParameter=function(p){if(p===37445)return 'Intel Inc.';"
+            "if(p===37446)return 'Intel Iris OpenGL Engine';return g.apply(this,[p]);};};"
+            "if(window.WebGLRenderingContext)_spoof(WebGLRenderingContext.prototype);"
+            "if(window.WebGL2RenderingContext)_spoof(WebGL2RenderingContext.prototype);"
+        )
         page = context.new_page()
         try:
             from .browser import _apply_stealth
@@ -220,6 +268,24 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
         page.goto(CHAT_URL, timeout=60000, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
 
+        # 复刻 2.1 GetLoginPng 前置动作：收起面板残留 -> 切「扫码登录」标签 -> 点二维码容器
+        try:
+            page.locator(
+                "#douyin_login_comp_flat_panel > div > div:nth-child(2) > div > div:nth-child(4) > p"
+            ).click(timeout=1500)
+        except Exception:
+            pass
+        try:
+            page.get_by_text("扫码登录").first.click(timeout=1500)
+        except Exception:
+            pass
+        page.wait_for_timeout(1000)
+        try:
+            page.locator("#animate_qrcode_container").first.click(timeout=1500)
+        except Exception:
+            pass
+        page.wait_for_timeout(2000)
+
         qr_data = _wait_and_extract_qrcode(page)
         if not qr_data:
             raise RuntimeError("未能从页面提取到登录二维码，请稍后重试")
@@ -227,6 +293,7 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
 
         deadline = time.time() + SESSION_TIMEOUT
         refresh_count = 0
+        face_clicked = False
         polls = 0
         while time.time() < deadline:
             if _is_stopped(aid):
@@ -257,6 +324,20 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
                     _set(aid, qrcode=qr_data,
                          message=f"二维码已自动刷新（第 {refresh_count} 次），请重新扫码")
 
+            # 复刻 2.1 GetCooker 的二次刷脸风控处理：确认登录后可能要求刷脸，
+            # 页面会展示新二维码供手机扫描，需持续提取并点击「已完成」
+            if not face_clicked:
+                if _js_click_first(page, ["手机刷脸验证", "刷脸验证"]):
+                    face_clicked = True
+                    logger.info("[%s] 触发二次安全验证，已点击刷脸按钮", aid)
+                    _set(aid, message="触发安全验证：请用抖音 App 扫描下方新二维码并按提示完成验证")
+                    page.wait_for_timeout(3000)
+            else:
+                _js_click_first(page, ["已完成", "验证成功"])
+                qr_face = _extract_face_qr(page)
+                if qr_face:
+                    _set(aid, qrcode=qr_face)
+
             page.wait_for_timeout(1500)
 
         _set(aid, status="expired", message="扫码超时，请重新发起扫码", qrcode="")
@@ -279,6 +360,11 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
                 pw.stop()
             except Exception:
                 pass
+        if xvfb_proc:
+            try:
+                xvfb_proc.terminate()
+            except Exception:
+                pass
         _release_slot_once(aid)
         _stop_flags.pop(aid, None)
         # 终态保留 120 秒供前端读取，之后由 GC 或下次 start 清理
@@ -287,6 +373,61 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
 
 class CancelledError(Exception):
     pass
+
+
+def _js_click_first(page, texts: list[str]) -> bool:
+    """对包含指定文本的首个元素执行 JS 点击（绕过遮挡），成功返回 True。"""
+    for t in texts:
+        try:
+            loc = page.get_by_text(t, exact=False)
+            if loc.count():
+                loc.first.evaluate("el => el.click()")
+                return True
+        except Exception:
+            continue
+    return False
+
+
+_FACE_QR_JS = """
+() => {
+    const pick = (el) => {
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 100 || rect.width > 350 || Math.abs(rect.width - rect.height) > 15) return null;
+        const src = el.src || "";
+        if (src.includes("base64,")) return src;
+        try {
+            const c = document.createElement("canvas");
+            c.width = el.naturalWidth || rect.width;
+            c.height = el.naturalHeight || rect.height;
+            c.getContext("2d").drawImage(el, 0, 0, c.width, c.height);
+            return c.toDataURL("image/png");
+        } catch (e) { return null; }
+    };
+    const imgs = document.querySelectorAll("img");
+    for (let i = imgs.length - 1; i >= 0; i--) {
+        const r = pick(imgs[i]);
+        if (r) return r;
+    }
+    const canvases = document.querySelectorAll("canvas");
+    for (let j = canvases.length - 1; j >= 0; j--) {
+        const c = canvases[j];
+        const rect = c.getBoundingClientRect();
+        if (rect.width >= 100 && rect.width <= 350 && Math.abs(rect.width - rect.height) <= 15) {
+            try { return c.toDataURL("image/png"); } catch (e) {}
+        }
+    }
+    return null;
+}
+"""
+
+
+def _extract_face_qr(page) -> str | None:
+    """复刻 2.1 二次验证取码：按尺寸启发式扫描页面中的 img/canvas。"""
+    try:
+        data = page.evaluate(_FACE_QR_JS)
+        return data if data and data.startswith("data:image") else None
+    except Exception:
+        return None
 
 
 def _wait_and_extract_qrcode(page, timeout_ms: int = 45000) -> str | None:
