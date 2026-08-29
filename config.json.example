@@ -1,0 +1,20 @@
+{
+  "schedule_time": "21:00",
+  "jitter_minutes": 30,
+  "send_gap_min": 6,
+  "send_gap_max": 12,
+  "max_friends_per_run": 0,
+  "friends": [
+    "好友昵称1",
+    "好友昵称2"
+  ],
+  "messages": [
+    "🔥 续火花",
+    "今天也要开心哦 🔥",
+    "晚上好 🔥"
+  ],
+  "auto_run_enabled": true,
+  "allow_first_message": false,
+  "first_message_daily_limit": 1,
+  "schedule_harvest_day": "off"
+}

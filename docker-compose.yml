@@ -1,0 +1,22 @@
+services:
+  douyin-cloud-streak:
+    build:
+      context: .
+      # 1=国内网络加速（清华 apt/pip + npmmirror Playwright），海外用户可改为 0
+      args:
+        USE_CN_MIRROR: "1"
+    container_name: douyin-cloud-streak
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      # ⚠️ 部署前务必改成自己的访问口令（随便一串字母数字），改完重启容器生效
+      - AUTH_TOKEN=spark_secret_token_change_me
+      - TZ=Asia/Shanghai
+    volumes:
+      # 台账/配置/登录态全部落在这个目录，删除容器数据不丢
+      - ./data:/app/data
+    # Chromium 在过小的 /dev/shm 下易崩溃，适当调大更稳
+    shm_size: "256mb"

@@ -1,0 +1,66 @@
+# ==============================================================================
+# Git 忽略规则 · 隐私保护与零泄漏规范
+# ==============================================================================
+
+# Python 缓存与编译产物
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 敏感登录凭证与台账数据 (绝对禁止上传！)
+state.json
+data/*.json
+!data/.gitkeep
+data/*.pid
+data/*.log
+data/logs/
+data/accounts/
+data/archived/
+data/avatars/
+.env
+
+# 临时日志与异常截图
+logs/
+*.log
+*.png
+*.jpg
+*.jpeg
+
+# 编辑器与系统文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+.agent/
+.cursor/
+.gemini/
+.monkeycode/
+.monkeycode-tmp-files/
+
+# 含明文服务器密码的运维文档，禁止提交
+docs/SERVER_OPERATIONS.md
