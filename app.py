@@ -841,7 +841,33 @@ def api_logs(
     return {"logs": "\n".join(recent_logs(max(10, min(n, 600))))}
 
 
+def _port_in_use(port: int) -> bool:
+    s = socket.socket()
+    try:
+        s.connect(("127.0.0.1", port))
+        return True
+    except Exception:
+        return False
+    finally:
+        s.close()
+
+
+def _find_free_port(start: int) -> int:
+    for _ in range(50):
+        if not _port_in_use(start):
+            return start
+        start += 1
+    return start
+
+
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
+    if _port_in_use(port):
+        port = _find_free_port(port + 1)
+        print(f"[提示] 端口 {os.environ.get('PORT', '8000')} 已被占用（可能是上次后台未关闭），本次改用端口 {port}。")
+        print(f"[提示] 请在浏览器访问 http://127.0.0.1:{port}")
+    if os.environ.get("AUTO_OPEN_BROWSER", "1") != "0":
+        import webbrowser
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
     uvicorn.run(app, host=host, port=port, log_level="info")

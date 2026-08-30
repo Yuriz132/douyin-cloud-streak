@@ -137,6 +137,34 @@ def main():
         print(f"    - 新增: {stats.get('added', 0)} 人")
         print(f"    - 更新: {stats.get('updated', 0)} 人")
         print(f"    - 当前有火花: {stats.get('sparking', 0)} 人")
+
+        # 新增：同步完成后询问是否部署到云端服务器
+        try:
+            ans = input("\n[❓] 是否将本地联系人台账部署到云端服务器？(y/N，直接回车跳过): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = ""
+        if ans in ("y", "yes"):
+            from sync_to_server import find_state_file, upload_to_server
+            state_path = find_state_file()
+            if not state_path:
+                print("[⚠️] 未找到 state.json，无法部署云端。请先运行「1.本地提取通行证.bat」扫码登录。")
+            else:
+                server_ip = input("👉 请输入云服务器公网 IP 地址 (例如 123.45.67.89): ").strip()
+                if not server_ip:
+                    print("[⚠️] 服务器 IP 不能为空，已取消部署云端。")
+                else:
+                    server_user = input("👉 请输入 SSH 登录用户名 [直接回车默认 root]: ").strip() or "root"
+                    port_input = input("👉 请输入 SSH 端口号 [直接回车默认 22]: ").strip()
+                    server_port = int(port_input) if port_input.isdigit() else 22
+                    remote_dir = input("👉 请输入服务器部署路径 [直接回车默认 /opt/douyin-cloud-streak]: ").strip() or "/opt/douyin-cloud-streak"
+                    print("-" * 65)
+                    password = input("🔑 请输入服务器密码 (明文直接可见，支持右键直接粘贴): ").strip()
+                    print("-" * 65)
+                    if not password:
+                        print("[⚠️] 服务器密码不能为空，已取消部署云端。")
+                    else:
+                        print(f"\n[*] 正在连接到服务器 {server_user}@{server_ip}:{server_port} ...")
+                        upload_to_server(state_path, server_ip, server_user, server_port, password, remote_dir)
         return
 
     # 3. 解析目标好友

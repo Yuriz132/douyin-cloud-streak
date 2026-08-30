@@ -42,41 +42,13 @@ def print_banner():
     print("=" * 65)
 
 
-def main():
-    print_banner()
-
-    state_path = find_state_file()
-    if not state_path:
+def upload_to_server(state_path: Path, server_ip: str, server_user: str, server_port: int,
+                     password: str, remote_dir: str) -> bool:
+    """把本地 state.json / ledger.json 通过 SFTP 上传到云服务器，成功返回 True。"""
+    if not state_path.exists():
         print("\n[❌ 错误] 本地未找到 state.json 登录凭证！")
-        print("👉 请先双击运行「1.本地提取通行证.bat」扫码登录生成通行证。")
-        input("\n按回车键退出...")
-        sys.exit(1)
-
-    print(f"[✓] 检测到本地登录凭据: {state_path} ({os.path.getsize(state_path)} 字节)\n")
-
-    # 1. 交互式输入连接信息
-    server_ip = input("👉 请输入云服务器公网 IP 地址 (例如 123.45.67.89): ").strip()
-    if not server_ip:
-        print("[❌ 错误] 服务器 IP 不能为空！")
-        input("\n按回车键退出...")
-        sys.exit(1)
-
-    server_user = input("👉 请输入 SSH 登录用户名 [直接回车默认 root]: ").strip() or "root"
-    port_input = input("👉 请输入 SSH 端口号 [直接回车默认 22]: ").strip()
-    server_port = int(port_input) if port_input.isdigit() else 22
-    remote_dir = input("👉 请输入服务器部署路径 [直接回车默认 /opt/douyin-cloud-streak]: ").strip() or "/opt/douyin-cloud-streak"
-
-    # 明文可见输入密码！
-    print("-" * 65)
-    password = input("🔑 请输入服务器密码 (明文直接可见，支持右键直接粘贴): ").strip()
-    print("-" * 65)
-
-    if not password:
-        print("[❌ 错误] 服务器密码不能为空！")
-        input("\n按回车键退出...")
-        sys.exit(1)
-
-    print(f"\n[*] 正在连接到服务器 {server_user}@{server_ip}:{server_port} ...")
+        print("👉 请先运行「1.本地提取通行证.bat」扫码登录生成通行证。")
+        return False
 
     try:
         import paramiko
@@ -95,15 +67,11 @@ def main():
 
         print("[✓] SSH 连接认证成功！")
 
-        # 确保远程目录存在
         remote_data_dir = f"{remote_dir.rstrip('/')}/data"
-        remote_target_file = f"{remote_data_dir}/state.json"
-
         print(f"[*] 正在确保远程目录存在: {remote_data_dir}")
         stdin, stdout, stderr = ssh.exec_command(f"mkdir -p '{remote_data_dir}'")
         stdout.channel.recv_exit_status()
 
-        # SFTP 上传登录态 + 联系人台账
         uploads = [(state_path.name, str(state_path))]
         if DATA_LEDGER.exists():
             uploads.append(("ledger.json", str(DATA_LEDGER)))
@@ -129,6 +97,7 @@ def main():
         print("2. 在「好友与消息」页面点击「一键勾选火花好友」并保存；")
         print("3. 云服务器现在开始将在每天定时为您自动续火花！")
         print("=" * 65)
+        return True
 
     except Exception as e:
         err_msg = str(e)
@@ -141,6 +110,44 @@ def main():
         else:
             print("❌ 其他错误：请检查 IP 或网络状态。")
         print(f"\n💡 备选方案：您也可以直接用电脑浏览器打开 http://{server_ip}:8000 在设置页直接上传 state.json。")
+        return False
+
+
+def main():
+    print_banner()
+
+    state_path = find_state_file()
+    if not state_path:
+        print("\n[❌ 错误] 本地未找到 state.json 登录凭证！")
+        print("👉 请先双击运行「1.本地提取通行证.bat」扫码登录生成通行证。")
+        input("\n按回车键退出...")
+        sys.exit(1)
+
+    print(f"[✓] 检测到本地登录凭据: {state_path} ({os.path.getsize(state_path)} 字节)\n")
+
+    server_ip = input("👉 请输入云服务器公网 IP 地址 (例如 123.45.67.89): ").strip()
+    if not server_ip:
+        print("[❌ 错误] 服务器 IP 不能为空！")
+        input("\n按回车键退出...")
+        sys.exit(1)
+
+    server_user = input("👉 请输入 SSH 登录用户名 [直接回车默认 root]: ").strip() or "root"
+    port_input = input("👉 请输入 SSH 端口号 [直接回车默认 22]: ").strip()
+    server_port = int(port_input) if port_input.isdigit() else 22
+    remote_dir = input("👉 请输入服务器部署路径 [直接回车默认 /opt/douyin-cloud-streak]: ").strip() or "/opt/douyin-cloud-streak"
+
+    print("-" * 65)
+    password = input("🔑 请输入服务器密码 (明文直接可见，支持右键直接粘贴): ").strip()
+    print("-" * 65)
+
+    if not password:
+        print("[❌ 错误] 服务器密码不能为空！")
+        input("\n按回车键退出...")
+        sys.exit(1)
+
+    print(f"\n[*] 正在连接到服务器 {server_user}@{server_ip}:{server_port} ...")
+
+    upload_to_server(state_path, server_ip, server_user, server_port, password, remote_dir)
 
     input("\n按回车键退出...")
 
