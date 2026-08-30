@@ -61,7 +61,7 @@ def upload_to_server(state_path: Path, server_ip: str, server_user: str, server_
             username=server_user,
             password=password,
             timeout=15,
-            banner_timeout=15,
+            banner_timeout=40,
             auth_timeout=15
         )
 
@@ -105,8 +105,23 @@ def upload_to_server(state_path: Path, server_ip: str, server_user: str, server_
         print("\n【排查建议】")
         if "Authentication failed" in err_msg or "password" in err_msg.lower():
             print("❌ 密码错误：请仔细核对您的服务器 root 密码是否正确。")
+        elif "banner" in err_msg.lower() or "No existing session" in err_msg:
+            print("❌ SSH 握手失败（端口通但读不到 SSH 协议 banner）：")
+            print("   服务器 SSH 服务未正常响应，常见原因：")
+            print("   1) 服务器负载打满（CPU/内存/磁盘 100%），sshd 卡住无法响应；")
+            print("   2) sshd 半死或连接数打满（MaxStartups 限制）；")
+            print("   3) fail2ban 临时封禁/限速；")
+            print("   4) sshd 未运行，或 22 端口被其他进程占用。")
+            print("   请用云厂商控制台的 VNC/网页终端登录服务器检查：")
+            print("   · 查看负载: uptime / free -m / df -h")
+            print("   · 重启 SSH: systemctl restart sshd")
+            print("   · 检查状态: systemctl status sshd")
+            print("   · 查封禁: fail2ban-client status sshd")
+            print("   · 查端口占用: ss -tlnp | grep :22")
+            print("   服务器恢复后重新运行本脚本即可。")
         elif "timed out" in err_msg or "timeout" in err_msg.lower():
-            print(f"❌ 连接超时：请检查云服务器安全组是否放行了 {server_port} (TCP) 端口。")
+            print(f"❌ 连接超时：请检查云服务器安全组是否放行了 {server_port} (TCP) 端口，")
+            print("   以及服务器 SSH 服务是否正常（可参考上方 SSH 握手失败的排查步骤）。")
         else:
             print("❌ 其他错误：请检查 IP 或网络状态。")
         print(f"\n💡 备选方案：您也可以直接用电脑浏览器打开 http://{server_ip}:8000 在设置页直接上传 state.json。")
