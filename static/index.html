@@ -877,7 +877,7 @@
             <div v-if="!status.state_file_exists" style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
               <div style="font-size: 13px; color: #9f1239; line-height: 1.5;">
                 <strong><svg class="icon-svg" style="width: 15px; height: 15px; margin-right: 4px; vertical-align: -2px;" viewBox="0 0 24 24" fill="none" stroke="#9f1239" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>当前服务器未检测到登录凭证 (state.json)：</strong><br />
-                已在电脑端提取？请双击电脑上的 <code>4.同步登录态到服务器.bat</code> 一键同步，或在右侧直接上传文件。
+                已在电脑端提取？请双击电脑上的 <code>2.上传本地文件加服务器部署.bat</code>（输入 1）一键同步，或在右侧直接上传文件。
               </div>
               <div style="display: flex; gap: 8px;">
                 <input type="file" ref="quickFileInput" accept=".json" style="display: none;" @change="handleFileUpload" />
@@ -1150,7 +1150,7 @@
                     </span>
                   </div>
                   <div style="font-size: 12.5px; color: var(--text-muted);">
-                    推荐直接点击下方「手机扫码登录」，服务器会自动生成二维码，手机扫码后凭证自动保存，全程无需电脑。也可以在电脑端双击 <code>1.本地提取通行证.bat</code> 后上传 <code>state.json</code>；凭证过期时同样在网页端重新扫码即可。
+                    推荐直接点击下方「手机扫码登录」，服务器会自动生成二维码，手机扫码后凭证自动保存，全程无需电脑。也可以在电脑端双击 <code>1.本地运行.bat</code>（输入 1）后上传 <code>state.json</code>；凭证过期时同样在网页端重新扫码即可。
                   </div>
                 </div>
 

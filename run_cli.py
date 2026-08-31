@@ -118,7 +118,7 @@ def main():
     # 1. 检查凭据
     if not sync_local_state(account_id):
         print("\n[❌ 错误] 未检测到登录凭证 state.json！")
-        print("👉 请先运行「1.本地提取通行证.bat」或执行 `python extract_cookie.py` 扫码登录，")
+        print("👉 请先运行「1.本地运行.bat」（输入 1）或执行 `python extract_cookie.py` 扫码登录，")
         print(f"   或为账号 {account_id} 上传登录态。")
         sys.exit(1)
 
@@ -147,7 +147,7 @@ def main():
             from sync_to_server import find_state_file, upload_to_server
             state_path = find_state_file()
             if not state_path:
-                print("[⚠️] 未找到 state.json，无法部署云端。请先运行「1.本地提取通行证.bat」扫码登录。")
+                print("[⚠️] 未找到 state.json，无法部署云端。请先运行「1.本地运行.bat」（输入 1）扫码登录。")
             else:
                 server_ip = input("👉 请输入云服务器公网 IP 地址 (例如 123.45.67.89): ").strip()
                 if not server_ip:
@@ -200,7 +200,7 @@ def main():
 
         if not selected:
             print("\n[⚠️ 提示] 台账中未勾选任何好友，且未检测到带火花的好友！")
-            print("👉 建议双击「3.启动管理后台.bat」进入网页端勾选好友，")
+            print("👉 建议运行「1.本地运行.bat」（输入 5）启动本地后台进入网页端勾选好友，")
             print("   或者在 config.json 填入好友昵称。")
             sys.exit(1)
 

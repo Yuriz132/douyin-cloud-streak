@@ -47,7 +47,7 @@ def upload_to_server(state_path: Path, server_ip: str, server_user: str, server_
     """把本地 state.json / ledger.json 通过 SFTP 上传到云服务器，成功返回 True。"""
     if not state_path.exists():
         print("\n[❌ 错误] 本地未找到 state.json 登录凭证！")
-        print("👉 请先运行「1.本地提取通行证.bat」扫码登录生成通行证。")
+        print("👉 请先运行「1.本地运行.bat」（输入 1）扫码登录生成通行证。")
         return False
 
     try:
@@ -134,7 +134,7 @@ def main():
     state_path = find_state_file()
     if not state_path:
         print("\n[❌ 错误] 本地未找到 state.json 登录凭证！")
-        print("👉 请先双击运行「1.本地提取通行证.bat」扫码登录生成通行证。")
+        print("👉 请先双击运行「1.本地运行.bat」（输入 1）扫码登录生成通行证。")
         input("\n按回车键退出...")
         sys.exit(1)
 

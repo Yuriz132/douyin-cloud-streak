@@ -385,7 +385,7 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
                 raise RuntimeError(
                     "抖音触发滑动验证码（风控拦截），无法获取登录二维码。"
                     "请稍后重新发起扫码；若反复出现，请改用本地电脑运行"
-                    "「1.本地提取通行证.bat」扫码后，用「4.同步登录态到服务器.bat」上传"
+                    "「1.本地运行.bat」（输入 1）扫码后，用「2.上传本地文件加服务器部署.bat」（输入 1）上传"
                 )
             raise RuntimeError("未能从页面提取到有效的登录二维码（多次刷新仍为黑屏/空白），请稍后重试")
         _set(aid, status="waiting_scan", message="请使用抖音 App 扫码登录", qrcode=enhanced_qr, deep_link=deep_link)
@@ -433,7 +433,7 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
                     _set(aid, status="failed",
                          message="抖音触发滑动验证码（风控拦截），网页端无法代你完成人工滑动。"
                                  "建议：① 稍等几分钟重新发起扫码；② 若反复出现，请改用本地电脑运行"
-                                 "「1.本地提取通行证.bat」扫码后，用「4.同步登录态到服务器.bat」上传。",
+                                 "「1.本地运行.bat」（输入 1）扫码后，用「2.上传本地文件加服务器部署.bat」（输入 1）上传。",
                          error="slider_captcha", qrcode="")
                     return
             else:

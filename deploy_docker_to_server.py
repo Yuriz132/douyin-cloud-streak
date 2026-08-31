@@ -1,8 +1,8 @@
 """Docker 一键部署工具：上传代码 → 服务器 Docker 构建（国内源加速）→ compose 启动
 
 与 deploy_to_server.py（systemd/venv 方式）二选一：
-- 5.服务器部署.bat  → deploy_to_server.py        （系统 service + Python venv）
-- 6.Docker部署.bat  → 本脚本                    （容器化，依赖已封装进镜像）
+- 2.上传本地文件加服务器部署.bat（输入 2） → deploy_to_server.py   （系统 service + Python venv）
+- 2.上传本地文件加服务器部署.bat（输入 3） → 本脚本                （容器化，依赖已封装进镜像）
 
 Docker 版在服务器上自动完成：
 1. 安装 Docker（若未装，apt 走阿里云国内源 + 官方 aliyun docker-ce 源）
