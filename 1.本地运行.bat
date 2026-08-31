@@ -21,15 +21,36 @@ if errorlevel 1 (
     exit /b
 )
 
-echo [1/3] 正在检查并自动安装依赖包（首次安装约需几分钟，请耐心等待）...
-pip install -r requirements.txt >nul 2>&1
+echo [1/2] 正在检查并自动安装依赖包（首次安装约需几分钟，请耐心等待）...
+python -m pip install -q -r requirements.txt
 if errorlevel 1 (
-    echo       官方源下载失败，改用国内清华镜像源加速...
-    pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+    echo.
+    echo       官方源下载失败，改用国内清华镜像源加速重试...
+    echo.
+    python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+    if errorlevel 1 (
+        echo.
+        echo ======================================================
+        echo  [依赖安装失败] 请按下面步骤排查：
+        echo   1. 查看上方报错前的 WARNING 信息：若出现 Retrying / 超时，
+        echo      多为网络或代理问题，请关闭 VPN / 加速器后重新运行本脚本；
+        echo   2. 打开新的黑框窗口执行 python --version 确认版本为 3.8 或更高，
+        echo      版本过低请到 python.org 重新安装并勾选 Add Python to PATH；
+        echo   3. 排查后仍失败时，请把本窗口的完整报错截图或复制保存，
+        echo      并附上 python --version 与 python -m pip --version 的输出。
+        echo ======================================================
+        echo.
+        pause
+        exit /b 1
+    )
 )
-echo [2/3] 正在确保 Chromium 浏览器内核就绪（首次下载约需几分钟）...
+echo [2/2] 正在确保 Chromium 浏览器内核就绪（首次下载约需几分钟）...
 playwright install chromium >nul 2>&1
-echo [3/3] 环境就绪！
+if errorlevel 1 (
+    echo       浏览器内核安装失败，若稍后提示 Playwright 浏览器未安装，
+    echo       请检查网络后重新运行本脚本。
+)
+echo 环境就绪！
 echo.
 echo ------------------------------------------------------
 echo  请选择本地运行模式：
