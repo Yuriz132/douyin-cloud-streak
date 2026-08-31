@@ -147,6 +147,17 @@ def _start_run(account_id: str, dry: bool, only_names: list[str] | None = None) 
                 record_run(result, aid)
                 logger.info("[%s] 本次发送完成：成功 %s 人，失败 %s 人，dry=%s",
                             aid, len(result.get("ok", [])), len(result.get("failed", [])), dry)
+                if result.get("failed"):
+                    _fails = []
+                    for f in result.get("failed", []):
+                        if isinstance(f, dict):
+                            _fails.append(f"{f.get('name', '?')}: {f.get('reason', '')}")
+                        else:
+                            _fails.append(str(f))
+                    logger.warning("[%s] 失败明细: %s", aid, " | ".join(_fails))
+                if result.get("skipped"):
+                    logger.info("[%s] 跳过 %s 人: %s", aid, len(result.get("skipped", [])),
+                                " | ".join(str(s) for s in result.get("skipped", [])[:10]))
                 if not dry and result.get("failed") and not result.get("logged_out"):
                     _schedule_retry(aid, result)
                 elif not dry:
