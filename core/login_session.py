@@ -381,12 +381,19 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
 
         enhanced_qr, deep_link = _extract_valid_qrcode(page)
         if not enhanced_qr:
+            if _slider_captcha_present(page):
+                raise RuntimeError(
+                    "抖音触发滑动验证码（风控拦截），无法获取登录二维码。"
+                    "请稍后重新发起扫码；若反复出现，请改用本地电脑运行"
+                    "「1.本地提取通行证.bat」扫码后，用「4.同步登录态到服务器.bat」上传"
+                )
             raise RuntimeError("未能从页面提取到有效的登录二维码（多次刷新仍为黑屏/空白），请稍后重试")
         _set(aid, status="waiting_scan", message="请使用抖音 App 扫码登录", qrcode=enhanced_qr, deep_link=deep_link)
 
         deadline = time.time() + SESSION_TIMEOUT
         refresh_count = 0
         face_clicked = False
+        slider_polls = 0
         polls = 0
         while time.time() < deadline:
             if _is_stopped(aid):
@@ -416,6 +423,21 @@ def _session_worker(aid: str, stop_flag: threading.Event) -> None:
                 if enhanced_qr:
                     _set(aid, qrcode=enhanced_qr, deep_link=deep_link,
                          message=f"二维码已自动刷新（第 {refresh_count} 次），请重新扫码")
+
+            # 滑动验证码风控：出现且持续未消失（3 次轮询 ≈ 4.5s）时快速失败，
+            # 给出明确反馈，避免干等超时后只报「扫码超时」让人摸不着头脑
+            if _slider_captcha_present(page):
+                slider_polls += 1
+                if slider_polls >= 3:
+                    logger.warning("[%s] 触发滑动验证码（风控拦截），无法自动完成，终止扫码会话", aid)
+                    _set(aid, status="failed",
+                         message="抖音触发滑动验证码（风控拦截），网页端无法代你完成人工滑动。"
+                                 "建议：① 稍等几分钟重新发起扫码；② 若反复出现，请改用本地电脑运行"
+                                 "「1.本地提取通行证.bat」扫码后，用「4.同步登录态到服务器.bat」上传。",
+                         error="slider_captcha", qrcode="")
+                    return
+            else:
+                slider_polls = 0
 
             # 二次安全验证风控处理：确认登录后可能要求刷脸，
             # 页面会展示新二维码供手机扫描，需持续提取并点击「已完成」
@@ -593,6 +615,32 @@ def _wait_and_extract_qrcode(page, timeout_ms: int = 45000) -> str | None:
             except Exception:
                 break
     return None
+
+
+# 滑动验证码（拼图/滑块风控）提示文案与结构特征
+_SLIDER_TEXTS = ("拖动滑块", "拖动下方滑块", "向右拖动", "滑块填充拼图", "完成拼图")
+
+
+def _slider_captcha_present(page) -> bool:
+    """检测抖音滑动验证码（滑块拼图风控）是否出现在页面上。"""
+    try:
+        for sel in (
+            "#captcha_container",
+            "#captcha-verify-image",
+            "[class*='captcha_verify']",
+            "iframe[src*='captcha']",
+            "iframe[src*='secsdk']",
+        ):
+            loc = page.locator(sel)
+            if loc.count() and loc.first.is_visible():
+                return True
+        for t in _SLIDER_TEXTS:
+            loc = page.get_by_text(t, exact=False)
+            if loc.count() and loc.first.is_visible():
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def _qr_expired(page) -> bool:
