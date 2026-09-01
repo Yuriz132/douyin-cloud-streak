@@ -87,13 +87,18 @@ def list_accounts() -> list[dict]:
 
 
 def get_account(account_id: str) -> dict | None:
+    reg = _load_registry()
     if account_id == "default":
+        meta = reg.get("default") or _default_account("default")
         return {
-            **_default_account("default"),
+            **meta,
             "is_default": True,
             "dir": str(account_dir("default")),
         }
-    return _load_registry().get(account_id)
+    meta = reg.get(account_id)
+    if meta is None:
+        return None
+    return {**meta, "is_default": False, "dir": str(account_dir(account_id))}
 
 
 def account_exists(account_id: str) -> bool:
@@ -122,14 +127,16 @@ def create_account(name: str = "", device: str = "") -> dict:
 
 
 def update_account(account_id: str, name: str | None = None, device: str | None = None, enabled: bool | None = None) -> dict | None:
-    """更新账号元信息（改名/备注/启停）。default 账号只允许改名与备注，不允许停用。"""
-    if account_id == "default":
-        return None
+    """更新账号元信息（改名/备注/启停）。default 账号支持启停与改名，仅不可删除。"""
     with _lock:
         reg = _load_registry()
-        if account_id not in reg:
+        if account_id == "default":
+            # default 为隐式账号：首次修改时落一份注册表条目以持久化启停状态
+            meta = reg.get("default") or _default_account("default")
+        elif account_id not in reg:
             return None
-        meta = reg[account_id]
+        else:
+            meta = reg[account_id]
         if name is not None:
             meta["name"] = (name or "").strip() or meta["name"]
         if device is not None:
@@ -137,6 +144,7 @@ def update_account(account_id: str, name: str | None = None, device: str | None 
         if enabled is not None:
             meta["enabled"] = bool(enabled)
         meta["updated_at"] = _now()
+        reg[account_id] = meta
         _save_registry(reg)
     return get_account(account_id)
 

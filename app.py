@@ -499,7 +499,7 @@ def api_account_update(
     aid = _resolve_account(account_id)
     acc = accounts.update_account(aid, name=body.name, device=body.device, enabled=body.enabled)
     if acc is None:
-        raise HTTPException(status_code=400, detail="默认账号不允许停用/删除")
+        raise HTTPException(status_code=400, detail="账号不存在")
     scheduler.apply_schedule(aid)
     return {"ok": True, "account": _account_summary(acc)}
 

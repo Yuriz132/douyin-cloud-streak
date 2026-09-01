@@ -37,17 +37,41 @@ def _job_id(account_id: str, kind: str) -> str:
     return f"{kind}_{account_id}"
 
 
-def _daily_job(account_id: str) -> None:
+def _gates_open(account_id: str) -> tuple[bool, str]:
+    """发送前的统一闸门：账号必须启用，且 auto_run_enabled 必须开启。
+
+    返回 (是否放行, 拦截原因)。定时 job、抖动等待后、失败补发 job 三处都会检查，
+    确保开关关闭或账号停用后任何调度路径都不会再触发发送。
+    """
+    try:
+        acc = next((a for a in list_accounts() if a["id"] == account_id), None)
+    except Exception:
+        acc = None
+    if acc is not None and not acc.get("enabled", True):
+        return False, "账号已停用"
     cfg = load_config(account_id)
     if not bool(cfg.get("auto_run_enabled", True)):
-        logger.info("[%s] 自动运行已关闭（auto_run_enabled=false），本次定时任务跳过", account_id)
-        _notify_outcome(account_id, False, "auto_run_enabled=false")
+        return False, "auto_run_enabled=false"
+    return True, ""
+
+
+def _daily_job(account_id: str) -> None:
+    ok, reason = _gates_open(account_id)
+    if not ok:
+        logger.info("[%s] 定时任务跳过：%s", account_id, reason)
+        _notify_outcome(account_id, False, reason)
         return
-    jitter = max(0, int(cfg.get("jitter_minutes", 30) or 30))
+    jitter = max(0, int(load_config(account_id).get("jitter_minutes", 30) or 30))
     if jitter:
         delay = random.uniform(0, jitter * 60)
         logger.info("[%s] 随机延迟 %.0f 秒后开始发送（抖动窗口 %s 分钟）", account_id, delay, jitter)
         time.sleep(delay)
+        # 抖动等待期间开关/账号状态可能被用户改变：发送前二次确认
+        ok, reason = _gates_open(account_id)
+        if not ok:
+            logger.info("[%s] 抖动等待后定时任务跳过：%s", account_id, reason)
+            _notify_outcome(account_id, False, reason)
+            return
     if not _run_func:
         return
     try:
@@ -78,6 +102,15 @@ def configure(run_func: Callable, harvest_func: Callable | None = None,
     apply_schedule()
 
 
+def _remove_job_safe(job_id: str) -> None:
+    if _scheduler is None:
+        return
+    try:
+        _scheduler.remove_job(job_id)
+    except Exception:
+        pass
+
+
 def apply_schedule(account_id: str | None = None) -> None:
     """按账号应用/更新定时任务。account_id 为 None 时对全部账号执行。"""
     if _scheduler is None:
@@ -92,9 +125,9 @@ def apply_schedule(account_id: str | None = None) -> None:
     for acc in accounts:
         aid = acc["id"]
         if not acc.get("enabled", True):
-            _scheduler.remove_job(_job_id(aid, "daily_send"))
-            _scheduler.remove_job(_job_id(aid, "weekly_harvest"))
-            logger.info("[%s] 账号已停用，定时任务已移除", aid)
+            for kind in ("daily_send", "weekly_harvest", "retry"):
+                _remove_job_safe(_job_id(aid, kind))
+            logger.info("[%s] 账号已停用，定时与补发任务已移除", aid)
             continue
 
         cfg = load_config(aid)
@@ -124,7 +157,7 @@ def apply_schedule(account_id: str | None = None) -> None:
             )
             logger.info("[%s] 周级采集已更新：每周 %s 03:00 (%s)", aid, day, TZ)
         else:
-            _scheduler.remove_job(_job_id(aid, "weekly_harvest"))
+            _remove_job_safe(_job_id(aid, "weekly_harvest"))
             if day not in {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}:
                 logger.info("[%s] 周级采集已关闭", aid)
 
@@ -151,20 +184,36 @@ def next_harvest_time(account_id: str | None = None) -> str | None:
     return _next_run(_scheduler.get_job(_job_id(account_id, "weekly_harvest")))
 
 
+def _retry_job(run_func: Callable, account_id: str) -> None:
+    """失败补发 job：触发前过统一闸门，开关已关闭或账号已停用时不再补发。"""
+    ok, reason = _gates_open(account_id)
+    if not ok:
+        logger.info("[%s] 自动补发已跳过：%s", account_id, reason)
+        _notify_outcome(account_id, False, f"补发跳过: {reason}")
+        return
+    try:
+        run_func()
+    except Exception as e:
+        logger.error("[%s] 自动补发执行失败: %s", account_id, e)
+        _notify_outcome(account_id, False, f"补发失败: {e}")
+
+
 def schedule_retry(run_func: Callable, delay_minutes: int = 45, account_id: str | None = None) -> None:
     if _scheduler is None:
         return
-    job_id = _job_id(account_id or DEFAULT_ACCOUNT_ID, "retry")
+    aid = account_id or DEFAULT_ACCOUNT_ID
+    job_id = _job_id(aid, "retry")
     if _scheduler.get_job(job_id):
         return
     run_at = datetime.now() + timedelta(minutes=delay_minutes)
     _scheduler.add_job(
-        run_func,
+        _retry_job,
         DateTrigger(run_date=run_at, timezone=TZ),
+        args=[run_func, aid],
         id=job_id,
         replace_existing=True,
     )
-    logger.info("[%s] 已安排 %s 分钟后自动补发本次失败的好友", account_id or DEFAULT_ACCOUNT_ID, delay_minutes)
+    logger.info("[%s] 已安排 %s 分钟后自动补发本次失败的好友", aid, delay_minutes)
 
 
 def cancel_retry(account_id: str | None = None) -> None:
