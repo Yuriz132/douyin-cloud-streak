@@ -517,7 +517,7 @@ def send_to_contact(page, name: str, msg_text: str, dry_run: bool, tracker: Mess
 
 # ── 联系人同步 ────────────────────────────────────────────────────────────
 
-_EXTRACT_JS = """
+_EXTRACT_JS = r"""
     () => {
         const out = [];
         const seen = new Set();
