@@ -332,6 +332,17 @@ async def lifespan(_app: FastAPI):
     try:
         accounts.list_accounts()  # 确保账号注册表目录就绪
 
+        # 清理上次进程退出残留的 running 锁：进程被重启/杀死时 finally 未执行，
+        # runtime.json 里 running=True 会让前端按钮永久显示"任务执行中"。
+        for _acct in accounts.list_accounts():
+            _aid = _acct.get("id") or "default"
+            try:
+                if load_runtime(_aid).get("running"):
+                    set_running(False, _aid)
+                    logger.warning("[%s] 检测到残留运行锁（上次进程退出未清理），已自动重置", _aid)
+            except Exception:
+                pass
+
         def _on_scheduled_outcome(account_id: str, ok: bool, detail: str) -> None:
             """定时任务触发结果写回运行时，使『上次定时发送是否成功/为何失败』在状态页可见。"""
             try:
