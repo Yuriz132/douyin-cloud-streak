@@ -44,26 +44,41 @@ _COMMON_ARGS = [
 
 # ── 浏览器实例池 ────────────────────────────────────────────────────────
 # 池 key = 登录态文件路径（无登录态时用 "__no_state__"），即按账号隔离。
-# entry = {"browser", "playwright", "refs", "last_used"}
+# entry = {"browser", "refs", "last_used"}
 # 说明：所有 open_browser 都在 core.executor 的单工作线程内调用，实例只被
 # 该线程使用，因此可安全复用；回收也只在工作线程内惰性进行。
+#
+# Playwright 驱动进程（sync_playwright().start()）为进程内全局单例：sync API
+# 的 start() 会在当前线程留下一个运行中的 asyncio loop，同一线程再次 start()
+# 必然报 "Playwright Sync API inside the asyncio loop"，因此按 key 复用浏览器
+# 的同时，playwright 驱动只能启动一次（官方推荐用法）。
 _POOL_LOCK = threading.Lock()
 _BROWSER_POOL: dict[str, dict] = {}
+_PW = None
+_PW_LOCK = threading.Lock()
 POOL_IDLE_TIMEOUT = 120.0  # 秒：空闲超时后自动回收实例
 
 
+def _ensure_playwright():
+    """返回进程内唯一的 sync Playwright 驱动（惰性启动一次，线程安全）。"""
+    global _PW
+    if _PW is not None:
+        return _PW
+    with _PW_LOCK:
+        if _PW is None:
+            _PW = sync_playwright().start()
+    return _PW
+
+
 def _reclaim(entry: dict) -> None:
-    """关闭并回收一个浏览器实例（幂等）。应在工作线程内调用。"""
+    """关闭并回收一个浏览器实例（幂等）。应在工作线程内调用。
+
+    只关闭浏览器，不停止 Playwright 驱动（全局共享，由 shutdown_pool 统一释放）。
+    """
     browser = entry.get("browser")
     if browser:
         try:
             browser.close()
-        except Exception:
-            pass
-    pw = entry.get("playwright")
-    if pw:
-        try:
-            pw.stop()
         except Exception:
             pass
 
@@ -80,11 +95,10 @@ def _reap_idle(now: float) -> None:
 
 
 def _new_pool_entry() -> dict:
-    pw = sync_playwright().start()
+    pw = _ensure_playwright()
     browser = pw.chromium.launch(headless=True, args=_COMMON_ARGS)
     return {
         "browser": browser,
-        "playwright": pw,
         "refs": 0,
         "last_used": time.time(),
     }
@@ -97,6 +111,14 @@ def shutdown_pool() -> None:
         _BROWSER_POOL.clear()
     for e in entries:
         _reclaim(e)
+    global _PW
+    pw = _PW
+    _PW = None
+    if pw:
+        try:
+            pw.stop()
+        except Exception:
+            pass
 
 
 def _apply_stealth(page) -> None:
@@ -152,7 +174,7 @@ def open_browser(state_path: Path | str | None = None, headless: bool = True, **
                 entry["refs"] = 1
                 _BROWSER_POOL[key] = entry
         browser = entry["browser"]
-        p = entry["playwright"]
+        p = _ensure_playwright()
 
         defaults = {
             "viewport": {"width": 1366, "height": 768},
