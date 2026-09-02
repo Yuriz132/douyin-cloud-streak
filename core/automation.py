@@ -270,6 +270,30 @@ def _search_and_open(page, name: str) -> bool:
         return False
 
 
+def _quick_logged_out(page) -> bool:
+    """轻量登录态检测：二维码弹窗或登录提示文本出现即视为掉线。
+
+    供定位/发送循环高频调用，不做 Cookie 校验（毫秒级返回）。
+    登录态中途失效时页面会骨架化列表并弹扫码弹窗，继续重试只会产出
+    "Element is not visible" 空转与假成功，必须尽早短路。
+    """
+    try:
+        qr = page.locator("#animate_qrcode_container")
+        if qr.count() and qr.first.is_visible():
+            return True
+    except Exception:
+        pass
+    for text in LOGIN_TEXTS:
+        try:
+            loc = page.get_by_text(text, exact=False)
+            for i in range(min(loc.count(), 3)):
+                if loc.nth(i).is_visible():
+                    return True
+        except Exception:
+            continue
+    return False
+
+
 def _locate_contact(page, name: str) -> tuple[bool, str]:
     """尝试点击联系人并校验切换成功，结合 JS 强力滚动遍历列表。返回(是否成功, 原因)。"""
     dup = _list_title_matches(page, name)
@@ -285,6 +309,8 @@ def _locate_contact(page, name: str) -> tuple[bool, str]:
         pass
 
     for attempt in range(80):
+        if attempt % 5 == 0 and _quick_logged_out(page):
+            return False, "登录态已过期（页面出现扫码登录弹窗），请重新扫码后再发送"
         try:
             target = _find_contact(page, name)
             if target.count():
@@ -462,7 +488,10 @@ def _settle_send(input_box, tracker: MessageSendTracker | None, msg_text: str,
             break
         time.sleep(0.5)
     if cleared:
-        return True, "ok"
+        # 弱判定（无服务端收据）必须在日志中可辨识：登录态失效导致页面弹窗/重排
+        # 也会"清空"输入框，历史上这里曾输出纯 ok 掩盖了全部消息实际未发出的故障。
+        logger.warning("发送未捕获服务端回执，仅凭输入框清空弱判定成功（请到会话页核实是否真的发出）")
+        return True, "ok(弱判定:无服务端回执)"
     return False, "发送后输入框未清空，消息可能未发出"
 
 
@@ -1173,6 +1202,19 @@ def run_send(dry_run: bool = False, only_names: list[str] | None = None, account
                         if "/chat" not in (page.url or ""):
                             logger.warning("[%s] 页面已偏离私信页，重新导航", aid)
                             _open_chat_page(page)
+
+                        # 每人发送前复检登录态：轮次中途掉线时（页面弹扫码/骨架化），
+                        # 若继续发送会因输入框被弹窗清空而批量产出假成功。
+                        logged, why = check_login(page)
+                        if not logged:
+                            logger.error("[%s] 发送中途登录态失效：%s，中止本轮剩余好友", aid, why)
+                            result["logged_out"] = True
+                            for rest in targets[len(result["ok"]) + len(result["failed"]) + len(result["skipped"]):]:
+                                if rest.get("display_name") != name:
+                                    result["failed"].append({"name": rest.get("display_name", "?"), "reason": f"登录态失效，未发送: {why}"})
+                            result["failed"].append({"name": name, "reason": f"登录态失效，未发送: {why}"})
+                            _screenshot(page, aid)
+                            break
 
                         custom_msg = str(entry.get("custom_message") or "").strip()
                         if custom_msg:

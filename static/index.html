@@ -1147,6 +1147,15 @@
                     <span :style="{ color: status.state_file_exists ? '#16a34a' : '#dc2626' }">
                       {{ status.state_file_exists ? '✓ 已检测到有效登录态' : '✗ 未检测到登录态' }}
                     </span>
+                    <span v-if="status.session_status === 'expired'" style="color: #dc2626; font-weight: 600; margin-left: 6px;">
+                      （最近实测：<strong>登录已失效</strong>，请重新扫码）
+                    </span>
+                    <span v-else-if="status.session_status === 'ok'" style="color: #16a34a; margin-left: 6px;">
+                      （最近实测：有效）
+                    </span>
+                  </div>
+                  <div style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 4px;">
+                    注意：凭证文件存在 ≠ 登录有效。抖音服务端可随时踢掉登录态（风控/异地登录），以「实时检测」结果为准。
                   </div>
                   <div style="font-size: 12.5px; color: var(--text-muted);">
                     推荐直接点击下方「手机扫码登录」，服务器会自动生成二维码，手机扫码后凭证自动保存，全程无需电脑。也可以在电脑端双击 <code>1.本地运行.bat</code>（输入 1）后上传 <code>state.json</code>；凭证过期时同样在网页端重新扫码即可。
@@ -1158,6 +1167,9 @@
                     手机扫码登录 / 重新验证
                   </el-button>
                   <input type="file" ref="fileInput" accept=".json" style="display: none;" @change="handleFileUpload" />
+                  <el-button class="mobile-full-btn" :loading="loginChecking" @click="checkLoginNow">
+                    实时检测登录态
+                  </el-button>
                   <el-button class="mobile-full-btn" @click="$refs.fileInput.click()">
                     上传 state.json 文件
                   </el-button>
@@ -1835,6 +1847,27 @@
           }
         };
 
+        const loginChecking = ref(false);
+        const checkLoginNow = async () => {
+          if (loginChecking.value) return;
+          loginChecking.value = true;
+          ElementPlus.ElMessage.info('正在打开浏览器实测登录态，约需 15~40 秒，请稍候…');
+          try {
+            const res = await api.post('/api/login/check', {});
+            if (res.data.logged_in) {
+              ElementPlus.ElMessage.success('实测通过：登录态当前有效 ✓');
+            } else {
+              ElementPlus.ElMessage.error('实测结果：' + (res.data.reason || '登录态已失效，请重新扫码登录'));
+            }
+            await Promise.all([loadStatus(), loadAccounts()]);
+          } catch (e) {
+            const msg = (e && e.response && e.response.data && e.response.data.detail) || '检测请求失败，请稍后重试';
+            ElementPlus.ElMessage.error(msg);
+          } finally {
+            loginChecking.value = false;
+          }
+        };
+
 
         const showTokenDialog = () => {
           tokenInput.value = getToken();
@@ -1929,6 +1962,8 @@
           openQrLogin,
           startQrLogin,
           cancelLoginPolling,
+          checkLoginNow,
+          loginChecking,
           showTokenDialog,
           saveToken
         };

@@ -15,6 +15,7 @@ import os
 import socket
 import sys
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -821,6 +822,53 @@ def api_login_cancel(
     _check_auth(token)
     aid = _resolve_account(account_id)
     return login_session.cancel(aid)
+
+
+@app.post("/api/login/check")
+def api_login_check(
+    token: str = Header(default="", alias="X-Auth-Token"),
+    account_id: str | None = None,
+) -> dict:
+    """实时检测登录态：真实打开浏览器访问抖音验证（Cookie 未过期 ≠ 服务端认可）。
+
+    检测结果同步写回 runtime.session_status，控制台状态立即反映真实情况。
+    浏览器操作必须经 executor 单工作线程执行（sync Playwright 实例绑定创建线程，
+    直接在请求线程打开浏览器会污染实例池，导致后续发送任务跨线程崩溃）。
+    """
+    _check_auth(token)
+    aid = _resolve_account(account_id)
+    if not _acquire_lock(aid, blocking=False):
+        raise HTTPException(status_code=409, detail="该账号正在执行任务，请稍后再试")
+
+    def _probe() -> dict:
+        state = get_valid_state_path(aid)
+        if not state:
+            return {"logged_in": False, "status": "expired", "reason": "本账号尚无登录态文件，请先扫码登录"}
+        from core.browser import open_browser
+
+        with open_browser(state_path=state) as (p, browser, context, page):
+            if not automation._open_chat_page(page):
+                return {"logged_in": False, "status": "expired", "reason": "私信页打开失败，登录态可能已失效"}
+            time.sleep(3)
+            automation._dismiss_dialogs(page)
+            logged, why = automation.check_login(page)
+        if logged:
+            logger.info("[%s] 登录态实时检测：有效", aid)
+            return {"logged_in": True, "status": "ok", "reason": "登录态有效"}
+        logger.warning("[%s] 登录态实时检测：已失效（%s）", aid, why)
+        return {"logged_in": False, "status": "expired", "reason": why}
+
+    try:
+        res = executor.submit_and_wait(_probe, timeout=180)
+        update_runtime(aid, session_status=res.get("status", "unknown"))
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[%s] 登录态检测异常: %s", aid, e)
+        return {"logged_in": False, "status": "unknown", "reason": f"检测异常: {e}"}
+    finally:
+        _release_lock(aid)
 
 
 @app.post("/api/upload-state")
