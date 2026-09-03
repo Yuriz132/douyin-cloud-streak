@@ -100,6 +100,7 @@ def _load_env() -> None:
 
 _load_env()
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "").strip()
+INJECT_AUTH_TOKEN = os.environ.get("INJECT_AUTH_TOKEN", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ── 认证 ──────────────────────────────────────────────────────────────────
@@ -448,9 +449,9 @@ class AccountBody(BaseModel):
 def index() -> HTMLResponse:
     html_file = STATIC_DIR / "index.html"
     html_content = html_file.read_text(encoding="utf-8")
-    # 自动注入云端实际生效的 AUTH_TOKEN，实现网页端零配置秒级免输令牌访问！
-    token_inject = f'<script>window.__SERVER_AUTH_TOKEN__ = "{AUTH_TOKEN}";</script>'
-    if "</head>" in html_content:
+    # 仅在显式启用时注入令牌，避免将服务端访问令牌暴露给网页访问者。
+    token_inject = f"<script>window.__SERVER_AUTH_TOKEN__ = {json.dumps(AUTH_TOKEN)};</script>"
+    if INJECT_AUTH_TOKEN and "</head>" in html_content:
         html_content = html_content.replace("</head>", f"  {token_inject}\n</head>")
     return HTMLResponse(
         content=html_content,

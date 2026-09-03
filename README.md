@@ -281,6 +281,8 @@ nano docker-compose.yml
 改完按 `Ctrl+O` 回车保存，`Ctrl+X` 退出。
 
 > ⚠️ 不改口令 = 任何知道你 IP 的人都能打开你的控制台。这是唯一必改项！
+>
+> 默认不会把 `AUTH_TOKEN` 发送到浏览器。首次访问时请手动输入上面设置的令牌；仅在可信内网中需要自动填充时，才将 `INJECT_AUTH_TOKEN=1`。
 
 ### 8.5 第四步：构建并启动
 
@@ -299,6 +301,14 @@ http://服务器IP:8000
 ```
 
 首次打开会要求输入访问口令——填上面 8.4 设置的那串即可。
+
+> 如果默认 Dockerfile 仍然无法拉取基础镜像，可使用专为国内网络准备的 `Dockerfile.cn`：
+>
+> ```bash
+> export DOCKERFILE=Dockerfile.cn
+> docker compose build
+> docker compose up -d
+> ```
 
 ### 8.6 日常管理命令速查
 
