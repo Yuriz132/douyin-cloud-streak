@@ -1,4 +1,4 @@
-FROM docker.m.daocloud.io/docker.io/library/python:3.11-slim
+FROM docker.m.daocloud.io/library/python:3.11-slim
 
 # 面向中国大陆网络：使用国内 Docker Hub 代理、清华 Debian/PyPI 源和 npmmirror Playwright 源。
 WORKDIR /app
