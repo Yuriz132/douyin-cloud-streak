@@ -479,6 +479,64 @@ def _account_summary(a: dict) -> dict:
     }
 
 
+_ip_info_cache: dict = {"ts": 0.0, "data": None}
+
+
+@app.get("/api/ip-info")
+def api_ip_info(token: str = Header(default="", alias="X-Auth-Token")) -> dict:
+    """服务器出口 IP 与地理位置概要（缓存 1 小时；进程重启后自动重新查询）。
+
+    沙箱休眠唤醒会更换容器与出口 IP，此接口让用户在概览页直观看到当前
+    出口 IP 与归属地，辅助判断登录态风控风险。
+    """
+    _check_auth(token)
+    now = time.time()
+    if _ip_info_cache["data"] and now - _ip_info_cache["ts"] < 3600:
+        return _ip_info_cache["data"]
+    import requests as _rq
+    from datetime import datetime as _dt
+    info = {
+        "ok": False, "ip": "", "country": "", "region": "", "city": "", "isp": "",
+        "queried_at": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    # 源 1：ip-api.com（免费 HTTP，含中文归属地与运营商）
+    try:
+        r = _rq.get(
+            "http://ip-api.com/json/?lang=zh-CN&fields=status,country,regionName,city,isp,query",
+            timeout=8,
+        )
+        d = r.json()
+        if d.get("status") == "success":
+            info.update({
+                "ok": True, "ip": d.get("query", ""),
+                "country": d.get("country", ""), "region": d.get("regionName", ""),
+                "city": d.get("city", ""), "isp": d.get("isp", ""),
+            })
+    except Exception as e:
+        logger.info("ip-api 查询失败: %s", e)
+    # 源 2：3322.org 裸 IP 兜底（仅 IP，无归属地）
+    if not info["ip"]:
+        try:
+            r = _rq.get("http://members.3322.org/dyndns/getip", timeout=8)
+            ip = (r.text or "").strip()
+            if ip:
+                info.update({"ok": True, "ip": ip, "country": "未知", "isp": "未知"})
+        except Exception as e:
+            logger.info("3322.org IP 查询失败: %s", e)
+    if info["ip"]:
+        # 显示友好化：常见 ISP 与地区名简化
+        _isp_map = [("Tencent Cloud", "腾讯云"), ("Alibaba", "阿里云"), ("Huawei", "华为云"),
+                    ("China Telecom", "中国电信"), ("China Unicom", "中国联通"), ("China Mobile", "中国移动")]
+        for k, v in _isp_map:
+            if k.lower() in (info["isp"] or "").lower():
+                info["isp"] = v
+                break
+        info["country"] = (info["country"] or "").replace("中華人民共和國", "中国").replace("中华人民共和国", "中国")
+        _ip_info_cache["data"] = info
+        _ip_info_cache["ts"] = now
+    return info
+
+
 @app.get("/api/accounts")
 def api_accounts(token: str = Header(default="", alias="X-Auth-Token")) -> dict:
     _check_auth(token)

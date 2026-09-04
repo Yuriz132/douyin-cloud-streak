@@ -469,13 +469,38 @@ def _receipt_verdict(receipt: dict | None) -> tuple[bool, str] | None:
     return False, f"发送失败：服务端返回错误 {code} ({receipt.get('status_msg')})"
 
 
+def _count_msg_bubble(page, msg_text: str, input_top: float) -> int:
+    """统计右侧会话消息区内与 msg_text 全等的可见元素数。
+
+    位置过滤排除两类干扰：左侧列表预览（x<300）与底部输入框（y>=input_top）。
+    用于发送前后对比：数量增加 = 消息气泡真的出现在会话里 = 端到端已发出。
+    """
+    n = 0
+    try:
+        loc = page.get_by_text(msg_text, exact=True)
+        for i in range(min(loc.count(), 10)):
+            try:
+                box = loc.nth(i).bounding_box()
+            except Exception:
+                continue
+            if box and box.get("x", 0) > 300 and 60 < box.get("y", 0) < input_top - 6:
+                n += 1
+    except Exception:
+        pass
+    return n
+
+
 def _settle_send(input_box, tracker: MessageSendTracker | None, msg_text: str,
-                 wait: float = 8, grace: float = 3.0) -> tuple[bool, str]:
-    """综合网络收据与输入框状态给出最终判定。
+                 bubble_before: int = 0, wait: float = 8, grace: float = 3.0,
+                 page=None) -> tuple[bool, str]:
+    """综合网络收据、输入框状态与消息区新气泡给出最终判定。
 
     - 有收据：以收据 status_code 为准（服务端权威结论）；
-    - 无收据：回退"输入框已清空"弱判定，但清空后再留 grace 秒宽限窗口，
-      捕获迟到收据（慢网络下拦截响应晚到，旧逻辑会漏判成发送成功）。
+    - 无收据：回退弱判定——输入框已清空时，若传入 page 则必须在会话消息区
+      核实到"发送前没有、发送后出现"的消息气泡，才算端到端发出。
+      登录态被服务端作废时页面不弹二维码，所有发送 API 静默失败，
+      输入框却会因 DOM 重排被清空——历史上仅凭"输入框清空"曾连续
+      两轮产出全部假成功，本核验即为最终防线。
     """
     cleared = _wait_input_cleared(input_box, msg_text, wait=wait)
     deadline = time.time() + (grace if cleared else 0)
@@ -488,10 +513,27 @@ def _settle_send(input_box, tracker: MessageSendTracker | None, msg_text: str,
             break
         time.sleep(0.5)
     if cleared:
-        # 弱判定（无服务端收据）必须在日志中可辨识：登录态失效导致页面弹窗/重排
-        # 也会"清空"输入框，历史上这里曾输出纯 ok 掩盖了全部消息实际未发出的故障。
-        logger.warning("发送未捕获服务端回执，仅凭输入框清空弱判定成功（请到会话页核实是否真的发出）")
-        return True, "ok(弱判定:无服务端回执)"
+        if page is None:
+            # 单元测试/无页面环境：退化为输入框清空弱判定
+            return True, "ok(弱判定:无服务端回执)"
+        input_top = 9999.0
+        try:
+            b = input_box.bounding_box()
+            if b:
+                input_top = float(b.get("y", 9999))
+        except Exception:
+            pass
+        bubble_after = _count_msg_bubble(page, msg_text, input_top)
+        if bubble_after > bubble_before:
+            logger.info("未捕获服务端回执，但消息区已核实到新增气泡（%s→%s），判定发送成功",
+                        bubble_before, bubble_after)
+            return True, "ok(无回执,已核实新气泡)"
+        logger.warning(
+            "发送未捕获服务端回执，且消息区未出现新气泡（发送前 %s / 发送后 %s），判定为未发出"
+            "——常见原因：登录态已被服务端作废（页面未弹二维码），请重新扫码",
+            bubble_before, bubble_after,
+        )
+        return False, "无服务端回执且会话中未核实到新消息，判定未发出（请重新扫码登录后重试）"
     return False, "发送后输入框未清空，消息可能未发出"
 
 
@@ -515,6 +557,15 @@ def _send_message(page, msg_text: str, dry_run: bool, tracker: MessageSendTracke
     for attempt in (1, 2):
         if tracker:
             tracker.reset()
+        # 记录发送前消息区已有气泡数，用于发送后对比核实新气泡（端到端验证）
+        input_top = 9999.0
+        try:
+            b = input_box.bounding_box()
+            if b:
+                input_top = float(b.get("y", 9999))
+        except Exception:
+            pass
+        bubble_before = _count_msg_bubble(page, msg_text, input_top)
         if not _type_and_send(page, input_box, msg_text):
             last_why = "文字未能输入到输入框"
             if attempt == 1:
@@ -522,7 +573,7 @@ def _send_message(page, msg_text: str, dry_run: bool, tracker: MessageSendTracke
                 continue
             return False, last_why
 
-        ok, why = _settle_send(input_box, tracker, msg_text)
+        ok, why = _settle_send(input_box, tracker, msg_text, bubble_before=bubble_before, page=page)
         if ok:
             return True, why
         last_why = why

@@ -870,6 +870,18 @@
                   {{ sparkFriendCount }} <span style="font-size: 12px; color: var(--text-muted); font-weight: 400;">人</span>
                 </div>
               </div>
+              <div class="stat-box" title="服务器出口 IP 与归属地（每小时刷新一次）">
+                <div class="stat-label">服务器 IP 归属地</div>
+                <div v-if="ipInfo && ipInfo.ok" class="stat-value" style="font-size: 16px; line-height: 1.3;">
+                  {{ ipInfo.ip }}
+                  <div style="font-size: 11.5px; color: var(--text-muted); font-weight: 400; margin-top: 2px;">
+                    {{ [ipInfo.country, ipInfo.region, ipInfo.city].filter(Boolean).join(' · ') }}<template v-if="ipInfo.isp">（{{ ipInfo.isp }}）</template>
+                  </div>
+                </div>
+                <div v-else class="stat-value" style="font-size: 13px; color: var(--text-muted); font-weight: 400;">
+                  {{ ipInfoLoading ? '查询中…' : '暂不可用' }}
+                </div>
+              </div>
             </div>
 
             <!-- 未检测到登录凭证时的醒目指引条 -->
@@ -1425,6 +1437,21 @@
           }
         };
 
+        const ipInfo = ref(null);
+        const ipInfoLoading = ref(false);
+        const loadIpInfo = async () => {
+          if (ipInfoLoading.value) return;
+          ipInfoLoading.value = true;
+          try {
+            const res = await api.get('/api/ip-info');
+            ipInfo.value = res.data;
+          } catch (e) {
+            ipInfo.value = null;
+          } finally {
+            ipInfoLoading.value = false;
+          }
+        };
+
         const loadAccounts = async () => {
           try {
             const res = await api.get('/api/accounts', { params: {} });
@@ -1575,7 +1602,7 @@
 
         const loadAll = async () => {
           await loadAccounts();
-          await Promise.all([loadStatus(), loadConfig(), loadLedger(), fetchLogs()]);
+          await Promise.all([loadStatus(), loadConfig(), loadLedger(), fetchLogs(), loadIpInfo()]);
         };
 
         const runStreak = async (dryRun = false) => {
@@ -1964,6 +1991,8 @@
           cancelLoginPolling,
           checkLoginNow,
           loginChecking,
+          ipInfo,
+          ipInfoLoading,
           showTokenDialog,
           saveToken
         };
