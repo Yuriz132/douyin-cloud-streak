@@ -17,8 +17,23 @@ import sys
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# ---- 强制日志与时间戳使用北京时间（UTC+8）----
+# 容器/服务器系统时区为 UTC 时，日志时间会慢 8 小时；此处全局校正，双保险：
+# 1) TZ 环境变量 + tzset：Linux/容器生效，影响 datetime.now()/time.localtime/APScheduler；
+#    Windows 无 tzset，跟随系统时区（通常已是北京时间）。
+# 2) logging.Formatter.converter 全局固定 UTC+8：无 tzdata 依赖，任何环境日志时间必准。
+os.environ["TZ"] = "Asia/Shanghai"  # 强覆盖，防止宿主/容器传入 TZ=UTC
+try:
+    time.tzset()
+except AttributeError:
+    pass
+_BJT = timezone(timedelta(hours=8))
+logging.Formatter.converter = staticmethod(
+    lambda ts: datetime.fromtimestamp(ts, _BJT).timetuple()
+)
 
 # 确保在 Windows 控制台下输出 Unicode/Emoji 正常
 if hasattr(sys.stdout, "reconfigure"):
