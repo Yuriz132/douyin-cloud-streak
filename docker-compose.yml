@@ -2,6 +2,8 @@ services:
   douyin-cloud-streak:
     build:
       context: .
+      # 默认使用 Dockerfile；国内网络可通过 DOCKERFILE=Dockerfile.cn 切换
+      dockerfile: ${DOCKERFILE:-Dockerfile}
       # 1=国内网络加速（清华 apt/pip + npmmirror Playwright），海外用户可改为 0
       args:
         USE_CN_MIRROR: "1"
@@ -14,6 +16,8 @@ services:
       - HOST=0.0.0.0
       # ⚠️ 部署前务必改成自己的访问口令（随便一串字母数字），改完重启容器生效
       - AUTH_TOKEN=spark_secret_token_change_me
+      # 默认不向网页注入访问口令；如仅在可信内网使用，可设为 1 自动填充
+      - INJECT_AUTH_TOKEN=0
       - TZ=Asia/Shanghai
     volumes:
       # 台账/配置/登录态全部落在这个目录，删除容器数据不丢
