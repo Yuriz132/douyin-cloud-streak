@@ -294,7 +294,221 @@ def _quick_logged_out(page) -> bool:
     return False
 
 
-def _locate_contact(page, name: str) -> tuple[bool, str]:
+_FIND_AND_CLICK_FIBER_JS = r"""
+(targets) => {
+    const targetList = Array.isArray(targets) ? targets : Object.values(targets).filter(Boolean).map(String);
+    if (!targetList.length) return { found: false, reason: "no_targets" };
+
+    const rows = Array.from(document.querySelectorAll('[class*="conversationConversationItemwrapper"]'));
+    if (!rows.length) return { found: false, reason: "no_rows" };
+
+    const getReactFiber = (el) => {
+        if (!el) return null;
+        const k = Object.keys(el).find(key => key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$'));
+        return k ? el[k] : null;
+    };
+    const getReactProps = (el) => {
+        if (!el) return null;
+        const k = Object.keys(el).find(key => key.startsWith('__reactProps$'));
+        return k ? el[k] : null;
+    };
+
+    const matchesTargets = (obj, depth = 0, seen = new WeakSet()) => {
+        if (!obj || typeof obj !== 'object' || depth > 5) return false;
+        try {
+            if (seen.has(obj)) return false;
+            seen.add(obj);
+        } catch (e) {}
+
+        try {
+            for (const k of Object.keys(obj)) {
+                const v = obj[k];
+                if (v === null || v === undefined) continue;
+                if (typeof v === 'string' || typeof v === 'number') {
+                    const s = String(v).trim();
+                    if (s && targetList.includes(s)) return true;
+                } else if (typeof v === 'object' && depth < 4) {
+                    if (matchesTargets(v, depth + 1, seen)) return true;
+                }
+            }
+        } catch (e) {}
+        return false;
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        let matched = false;
+
+        // 1. Props on row or firstElementChild
+        const p1 = getReactProps(row);
+        if (p1 && matchesTargets(p1)) matched = true;
+        if (!matched && row.firstElementChild) {
+            const p2 = getReactProps(row.firstElementChild);
+            if (p2 && matchesTargets(p2)) matched = true;
+        }
+
+        // 2. Fiber chain traversal (up to 8 levels)
+        if (!matched) {
+            let f = getReactFiber(row) || (row.firstElementChild ? getReactFiber(row.firstElementChild) : null);
+            let count = 0;
+            while (f && count < 8) {
+                if (f.memoizedProps && matchesTargets(f.memoizedProps)) {
+                    matched = true;
+                    break;
+                }
+                if (f.memoizedState && matchesTargets(f.memoizedState)) {
+                    matched = true;
+                    break;
+                }
+                f = f.return;
+                count++;
+            }
+        }
+
+        if (matched) {
+            row.setAttribute('data-streak-fiber-target', 'true');
+            row.scrollIntoView({ behavior: 'auto', block: 'center' });
+            try { row.click(); } catch(e) {}
+            return { found: true, index: i };
+        }
+    }
+    return { found: false, count: rows.length };
+}
+"""
+
+_GET_HEADER_NAME_JS = r"""
+() => {
+    // 1. 优先通过类名查找会话顶栏容器
+    const headerSelectors = [
+        '[class*="chatHeader"]',
+        '[class*="ChatHeader"]',
+        '[class*="conversationHeader"]',
+        '[class*="im-header"]',
+        '[class*="headerWrapper"]'
+    ];
+    for (const sel of headerSelectors) {
+        const header = document.querySelector(sel);
+        if (header) {
+            const titleEl = header.querySelector('[class*="title"], [class*="Title"], [class*="name"], [class*="Name"]');
+            if (titleEl && titleEl.textContent) {
+                const t = titleEl.textContent.trim();
+                if (t && t.length < 40 && !['消息', '私信', '通知'].includes(t)) return t;
+            }
+        }
+    }
+    // 2. 坐标区域查找：在右侧区域 (x > 280, 0 <= y <= 90) 的文字元素中寻找字号最大、最显著的文本
+    const candidates = [];
+    const els = document.querySelectorAll('h1, h2, h3, div, span, p');
+    for (const el of els) {
+        const r = el.getBoundingClientRect();
+        if (r.x > 280 && r.y >= 0 && r.y <= 90 && r.width > 20 && r.height >= 12 && r.height <= 60) {
+            let direct = "";
+            el.childNodes.forEach(n => { if (n.nodeType === 3) direct += n.textContent; });
+            let t = direct.trim();
+            if (!t && el.children.length <= 1) t = (el.textContent || "").trim();
+            if (t && t.length < 40 && !t.includes(":") && !['消息', '私信', '通知', '关注'].includes(t)) {
+                const fs = parseFloat(window.getComputedStyle(el).fontSize) || 14;
+                candidates.push({ text: t, fs, x: r.x, y: r.y });
+            }
+        }
+    }
+    if (candidates.length) {
+        candidates.sort((a, b) => b.fs - a.fs);
+        return candidates[0].text;
+    }
+    return "";
+}
+"""
+
+
+def _locate_by_fiber_id(
+    page,
+    entry: dict,
+    target_ids: dict,
+    account_id: str | None = None,
+) -> bool:
+    """第二梯队：React Fiber 底层 ID 匹配兜底与改名自愈。
+
+    遍历聊天列表项 DOM 节点，检查 __reactProps 与 __reactFiber memoizedProps，
+    命中任一目标 ID 即滚动并触发点击进入会话；
+    随后校验输入框并提取顶部新备注，若发生改名则触发自动改名自愈更新台账。
+    """
+    id_list = [v for v in target_ids.values() if v]
+    if not id_list:
+        return False
+
+    old_name = entry.get("display_name", "")
+    logger.info("[%s] 启动 React Fiber 底层 ID 匹配，目标标识: %s", old_name, id_list)
+
+    clicked = False
+    for scroll_attempt in range(5):
+        try:
+            res = page.evaluate(_FIND_AND_CLICK_FIBER_JS, id_list) or {}
+            if res.get("found"):
+                target_loc = page.locator('[data-streak-fiber-target="true"]').first
+                if target_loc.count():
+                    try:
+                        target_loc.click(force=True, timeout=5000)
+                    except Exception:
+                        pass
+                    try:
+                        target_loc.evaluate("el => el.removeAttribute('data-streak-fiber-target')")
+                    except Exception:
+                        pass
+                clicked = True
+                break
+            else:
+                # 滚动聊天列表以加载更多虚拟 DOM 节点
+                try:
+                    page.mouse.move(200, 350)
+                    page.mouse.wheel(0, 500)
+                except Exception:
+                    pass
+                time.sleep(1.5)
+        except Exception as e:
+            logger.warning("[%s] Fiber 扫描异常: %s", old_name, str(e)[:100])
+            time.sleep(1)
+
+    if not clicked:
+        logger.warning("[%s] React Fiber 扫描未找到匹配目标 ID 的联系人节点", old_name)
+        return False
+
+    time.sleep(random.uniform(2, 3.5))
+
+    # 校验是否成功进入会话（聊天输入框出现）
+    input_box = page.locator('div[contenteditable="true"]').first
+    try:
+        input_box.wait_for(state="visible", timeout=8000)
+    except Exception:
+        logger.warning("[%s] Fiber ID 点击后未检测到聊天输入框，可能未成功打开会话", old_name)
+        return False
+
+    # 读取右侧顶栏的会话名称，判断是否发生改名
+    try:
+        new_header_name = page.evaluate(_GET_HEADER_NAME_JS) or ""
+        if new_header_name and new_header_name != old_name:
+            logger.info("⚡ [改名自愈] 成功命中并识别好友改名: 「%s」-> 「%s」，正在更新本地台账...", old_name, new_header_name)
+            updated = ledger.update_contact_name_by_id(
+                old_name=old_name,
+                new_name=new_header_name,
+                target_ids=target_ids,
+                account_id=account_id,
+            )
+            if updated:
+                entry["display_name"] = new_header_name
+                logger.info("⚡ [改名自愈] 台账已成功更新为最新备注「%s」，下次将直接走第一梯队文本匹配！", new_header_name)
+    except Exception as e:
+        logger.warning("[%s] 提取新备注自愈发生微小异常: %s", old_name, e)
+
+    return True
+
+
+def _locate_contact(
+    page,
+    name: str,
+    entry: dict | None = None,
+    account_id: str | None = None,
+) -> tuple[bool, str]:
     """尝试点击联系人并校验切换成功，结合 JS 强力滚动遍历列表。返回(是否成功, 原因)。"""
     dup = _list_title_matches(page, name)
     if dup > 1:
@@ -340,6 +554,21 @@ def _locate_contact(page, name: str) -> tuple[bool, str]:
         time.sleep(random.uniform(1, 3))
         if _verify_in_conversation(page, name):
             return True, "ok"
+
+    # ── 2. 仅在原有方法均失败时，触发 ID 兜底 ──────────────
+    if entry:
+        target_ids = {
+            "user_id": str(entry.get("user_id") or "").strip(),
+            "conversation_id": str(entry.get("conversation_id") or "").strip(),
+            "sec_uid": str(entry.get("sec_uid") or "").strip(),
+            "short_id": str(entry.get("short_id") or "").strip(),
+        }
+        valid_ids = {k: v for k, v in target_ids.items() if v}
+        if valid_ids:
+            logger.info("[%s] 原有文本定位失败，尝试启用 React Fiber 底层 ID 匹配兜底... 目标标识: %s", name, valid_ids)
+            if _locate_by_fiber_id(page, entry, valid_ids, account_id=account_id):
+                return True, "ok"
+
     return False, "未能切换到该好友会话（名字不在聊天列表，或页面结构变化）"
 
 
@@ -584,10 +813,18 @@ def _send_message(page, msg_text: str, dry_run: bool, tracker: MessageSendTracke
     return False, last_why
 
 
-def send_to_contact(page, name: str, msg_text: str, dry_run: bool, tracker: MessageSendTracker | None = None) -> tuple[bool, str]:
+def send_to_contact(
+    page,
+    name: str,
+    msg_text: str,
+    dry_run: bool,
+    tracker: MessageSendTracker | None = None,
+    entry: dict | None = None,
+    account_id: str | None = None,
+) -> tuple[bool, str]:
     """完整流程：定位好友 → 校验切换 → 发送消息。"""
     _dismiss_dialogs(page)
-    ok, why = _locate_contact(page, name)
+    ok, why = _locate_contact(page, name, entry=entry, account_id=account_id)
     if not ok:
         return False, why
     if detect_rate_limit(page):
@@ -707,7 +944,102 @@ _EXTRACT_JS = r"""
                 if (!asrc.includes('flame_icon')) avatar = asrc;
             }
 
-            out.push({ name: finalName, streak: streak, avatar: avatar });
+            // 从 React Fiber / Props 提取底层 ID (user_id, conversation_id, sec_uid, short_id)
+            const getReactFiber = (el) => {
+                if (!el) return null;
+                const k = Object.keys(el).find(key => key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$'));
+                return k ? el[k] : null;
+            };
+            const getReactProps = (el) => {
+                if (!el) return null;
+                const k = Object.keys(el).find(key => key.startsWith('__reactProps$'));
+                return k ? el[k] : null;
+            };
+
+            const scanForIds = (obj, depth = 0, seen = new WeakSet()) => {
+                const res = { user_id: "", conversation_id: "", sec_uid: "", short_id: "" };
+                if (!obj || typeof obj !== 'object' || depth > 4) return res;
+                try {
+                    if (seen.has(obj)) return res;
+                    seen.add(obj);
+                } catch (e) {}
+
+                const merge = (sub) => {
+                    if (!res.user_id && sub.user_id) res.user_id = sub.user_id;
+                    if (!res.conversation_id && sub.conversation_id) res.conversation_id = sub.conversation_id;
+                    if (!res.sec_uid && sub.sec_uid) res.sec_uid = sub.sec_uid;
+                    if (!res.short_id && sub.short_id) res.short_id = sub.short_id;
+                };
+
+                try {
+                    for (const k of Object.keys(obj)) {
+                        const v = obj[k];
+                        if (v === null || v === undefined) continue;
+                        const lk = k.toLowerCase();
+                        if (typeof v === 'string' || typeof v === 'number') {
+                            const s = String(v).trim();
+                            if (!s) continue;
+                            if (!res.conversation_id) {
+                                if ((lk.includes('conversation') || lk === 'cid') && (lk.includes('id') || lk === 'cid')) {
+                                    res.conversation_id = s;
+                                } else if (s.startsWith('0:') && s.split(':').length >= 3) {
+                                    res.conversation_id = s;
+                                }
+                            }
+                            if (!res.user_id) {
+                                if (['user_id', 'userid', 'uid', 'to_user_id', 'touserid', 'peer_id', 'peerid', 'target_id'].includes(lk)) {
+                                    if (/^\d{5,}$/.test(s)) res.user_id = s;
+                                }
+                            }
+                            if (!res.sec_uid) {
+                                if (lk.includes('sec_uid') || lk.includes('secuid') || lk.includes('sec_user_id')) {
+                                    if (s.startsWith('MS4wLjAB') || s.length > 20) res.sec_uid = s;
+                                }
+                            }
+                            if (!res.short_id) {
+                                if (lk.includes('short_id') || lk.includes('shortid')) {
+                                    res.short_id = s;
+                                }
+                            }
+                        } else if (typeof v === 'object' && depth < 3) {
+                            merge(scanForIds(v, depth + 1, seen));
+                        }
+                        if (res.user_id && res.conversation_id) break;
+                    }
+                } catch (e) {}
+                return res;
+            };
+
+            let extractedIds = { user_id: "", conversation_id: "", sec_uid: "", short_id: "" };
+            const rProps = getReactProps(row) || (row.firstElementChild ? getReactProps(row.firstElementChild) : null);
+            if (rProps) {
+                const pIds = scanForIds(rProps);
+                extractedIds = { ...extractedIds, ...pIds };
+            }
+            let curFiber = getReactFiber(row) || (row.firstElementChild ? getReactFiber(row.firstElementChild) : null);
+            let fLevel = 0;
+            while (curFiber && fLevel < 8) {
+                if (curFiber.memoizedProps) {
+                    const fIds = scanForIds(curFiber.memoizedProps);
+                    if (!extractedIds.user_id && fIds.user_id) extractedIds.user_id = fIds.user_id;
+                    if (!extractedIds.conversation_id && fIds.conversation_id) extractedIds.conversation_id = fIds.conversation_id;
+                    if (!extractedIds.sec_uid && fIds.sec_uid) extractedIds.sec_uid = fIds.sec_uid;
+                    if (!extractedIds.short_id && fIds.short_id) extractedIds.short_id = fIds.short_id;
+                }
+                if (extractedIds.user_id && extractedIds.conversation_id) break;
+                curFiber = curFiber.return;
+                fLevel++;
+            }
+
+            out.push({
+                name: finalName,
+                streak: streak,
+                avatar: avatar,
+                user_id: extractedIds.user_id,
+                conversation_id: extractedIds.conversation_id,
+                sec_uid: extractedIds.sec_uid,
+                short_id: extractedIds.short_id,
+            });
         });
 
         // 触底检测与滚动高度记录
@@ -1149,7 +1481,9 @@ def compute_pending(cfg: dict | None = None, account_id: str | None = None) -> l
 def _send_consumer(page, entry: dict, msg: str, dry_run: bool, result: dict, account_id: str | None = None, tracker: MessageSendTracker | None = None) -> None:
     """通道 A：consumer 重防护发送。"""
     name = entry["display_name"]
-    ok, why = send_to_contact(page, name, msg, dry_run, tracker=tracker)
+    ok, why = send_to_contact(page, name, msg, dry_run, tracker=tracker, entry=entry, account_id=account_id)
+    # 若在定位期间触发底层 ID 改名自愈，entry["display_name"] 会被更新为最新备注
+    name = entry.get("display_name") or name
     if ok:
         result["ok"].append(name)
         # dry-run 只演练判定链路，不产生任何台账副作用

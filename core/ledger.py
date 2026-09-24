@@ -36,6 +36,8 @@ def _default_entry(display_name: str) -> dict:
         "nickname": "",
         "short_id": "",
         "user_id": "",
+        "sec_uid": "",            # 抖音用户加密 ID (如 MS4wLjAB...)
+        "conversation_id": "",    # 聊天会话唯一 ID (如 0:uid1:uid2)
         "avatar": "",             # 本地缓存头像路径 /avatars/<aid>/<hash>.<ext>
         "custom_message": "",     # 好友专属自定义发送文案（为空时跟随全局文案库）
         "streak_days": 0,
@@ -93,20 +95,37 @@ def _save(entries: list[dict], account_id: str | None = None) -> None:
 
 
 def _upsert(entries: list[dict], entry: dict) -> dict:
-    """按 display_name upsert：更新新字段，但保留已有条目的 selected / last_sent_at。
+    """按 ID / display_name upsert：更新新字段，但保留已有条目的 selected / last_sent_at。
 
-    新增条目补齐默认字段，保证 schema 一致。返回命中/新增的条目。
+    优先按 user_id / conversation_id 匹配已有条目（防止改名后出现重复条目），
+    次优按 display_name 匹配。新增条目补齐默认字段，保证 schema 一致。
+    返回命中/新增的条目。
     """
+    target = None
+    uid = str(entry.get("user_id") or "").strip()
+    cid = str(entry.get("conversation_id") or "").strip()
+
     for e in entries:
+        if uid and str(e.get("user_id") or "").strip() == uid:
+            target = e
+            break
+        if cid and str(e.get("conversation_id") or "").strip() == cid:
+            target = e
+            break
         if e.get("display_name") == entry["display_name"]:
-            selected = e.get("selected", False)
-            last_sent = e.get("last_sent_at")
-            e.update(entry)
-            for k, v in _default_entry(entry["display_name"]).items():
-                e.setdefault(k, v)
-            e["selected"] = selected
-            e["last_sent_at"] = last_sent
-            return e
+            target = e
+            break
+
+    if target is not None:
+        selected = target.get("selected", False)
+        last_sent = target.get("last_sent_at")
+        target.update(entry)
+        for k, v in _default_entry(entry["display_name"]).items():
+            target.setdefault(k, v)
+        target["selected"] = selected
+        target["last_sent_at"] = last_sent
+        return target
+
     base = _default_entry(entry["display_name"])
     base.update(entry)
     entries.append(base)
@@ -170,13 +189,18 @@ def merge_consumer_contacts(contacts: list[dict], account_id: str | None = None)
                 eff_streak = new_streak
             else:
                 eff_streak = int(old_entry.get("streak_days") or 0)
-            e = _upsert(entries, {
+            up_data = {
                 "display_name": name,
                 "streak_days": eff_streak,
                 "has_conversation": True,
                 "channel": "consumer",
                 "avatar": avatar_path or old_avatar,
-            })
+            }
+            for id_key in ("user_id", "conversation_id", "sec_uid", "short_id"):
+                if c.get(id_key):
+                    up_data[id_key] = str(c[id_key]).strip()
+
+            e = _upsert(entries, up_data)
             e.setdefault("source", {})["consumer"] = True
             if e.get("source", {}).get("creator") and e.get("nickname") == name:
                 e["join_confidence"] = "high"
@@ -509,6 +533,64 @@ def stats(account_id: str | None = None) -> dict:
             for e in top_streak
         ],
     }
+
+
+def update_contact_name_by_id(
+    old_name: str,
+    new_name: str,
+    target_ids: dict | list | set | None = None,
+    account_id: str | None = None,
+) -> bool:
+    """改名自愈：通过底层 ID 或旧显示名锁定联系人，并更新为页面顶栏提取的最新显示名。
+
+    更新后下一次自动化运行将直接命中第一梯队文本匹配，无需每次走 Fiber 兜底。
+    返回是否更新成功。
+    """
+    clean_new = str(new_name or "").strip()
+    if not clean_new or clean_new == old_name:
+        return False
+
+    with _lock:
+        entries = load_ledger(account_id)
+        matched = None
+
+        # 提取所有目标 ID 集合
+        id_values = set()
+        if isinstance(target_ids, dict):
+            id_values = {str(v).strip() for v in target_ids.values() if str(v).strip()}
+        elif isinstance(target_ids, (list, tuple, set)):
+            id_values = {str(v).strip() for v in target_ids if str(v).strip()}
+
+        # 1. 优先按底层 ID 集合匹配
+        if id_values:
+            for e in entries:
+                e_ids = {
+                    str(e.get("user_id") or "").strip(),
+                    str(e.get("conversation_id") or "").strip(),
+                    str(e.get("sec_uid") or "").strip(),
+                    str(e.get("short_id") or "").strip(),
+                } - {""}
+                if e_ids & id_values:
+                    matched = e
+                    break
+
+        # 2. 兜底按 old_name 匹配
+        if matched is None and old_name:
+            for e in entries:
+                if e.get("display_name") == old_name:
+                    matched = e
+                    break
+
+        if matched is not None:
+            matched["display_name"] = clean_new
+            if isinstance(target_ids, dict):
+                for k in ("user_id", "conversation_id", "sec_uid", "short_id"):
+                    if target_ids.get(k) and not matched.get(k):
+                        matched[k] = str(target_ids[k]).strip()
+            _save(entries, account_id)
+            return True
+
+        return False
 
 
 # 别名兼容
